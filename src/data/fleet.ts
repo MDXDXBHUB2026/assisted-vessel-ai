@@ -1,0 +1,61 @@
+import type { FleetVesselSummary } from '@/types'
+
+export function buildBaselineFleet(): FleetVesselSummary[] {
+  return [
+    {
+      vesselId: 'own',
+      name: 'MV Meridian Voyager',
+      vesselType: 'Container Vessel',
+      operationalMode: 'Open Sea',
+      assistanceMode: 'healthy',
+      riskLevel: 'low',
+      position: { latitude: 1.28, longitude: 103.85 },
+      activeRequests: 0,
+      communicationsOk: true,
+    },
+    {
+      vesselId: 'v2',
+      name: 'MV Northern Aurora',
+      vesselType: 'Container Vessel',
+      operationalMode: 'Port Approach',
+      assistanceMode: 'advisory',
+      riskLevel: 'low',
+      position: { latitude: 22.3, longitude: 114.2 },
+      activeRequests: 0,
+      communicationsOk: true,
+    },
+    {
+      vesselId: 'v3',
+      name: 'MV Silver Current',
+      vesselType: 'Container Vessel',
+      operationalMode: 'Open Sea',
+      assistanceMode: 'warning',
+      riskLevel: 'medium',
+      position: { latitude: 35.6, longitude: 139.7 },
+      activeRequests: 1,
+      communicationsOk: true,
+    },
+    {
+      vesselId: 'v4',
+      name: 'MV Pacific Concord',
+      vesselType: 'Container Vessel',
+      operationalMode: 'Anchored',
+      assistanceMode: 'healthy',
+      riskLevel: 'low',
+      position: { latitude: 3.1, longitude: 101.4 },
+      activeRequests: 0,
+      communicationsOk: true,
+    },
+    {
+      vesselId: 'v5',
+      name: 'MV Coral Sentinel',
+      vesselType: 'Container Vessel',
+      operationalMode: 'Coastal',
+      assistanceMode: 'critical',
+      riskLevel: 'high',
+      position: { latitude: -6.1, longitude: 106.8 },
+      activeRequests: 2,
+      communicationsOk: false,
+    },
+  ]
+}
