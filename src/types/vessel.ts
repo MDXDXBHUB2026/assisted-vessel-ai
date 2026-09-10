@@ -69,7 +69,12 @@ export interface ReeferUnit {
   containerRef: string
   cargoCategory: string
   setPointC: number
+  /** Supply-air temperature — the primary controlled reading, historically exposed as `actualTempC`. */
   actualTempC: number
+  /** Return-air temperature — supply plus the cargo's heat load; a widening supply/return spread is itself diagnostic. */
+  returnTempC: number
+  /** Ambient temperature around the reefer bay, influencing compressor duty and power draw margin. */
+  ambientTempC: number
   trend: 'stable' | 'rising' | 'falling'
   powerStatus: 'on_power' | 'power_fluctuation' | 'off_power'
   alarmCount: number

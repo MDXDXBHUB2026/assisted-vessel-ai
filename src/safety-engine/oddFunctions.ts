@@ -1,4 +1,4 @@
-import type { OperationalMode } from '@/types'
+import type { AssistanceLevel, OperationalMode } from '@/types'
 
 export interface AssistedFunctionDefinition {
   id: string
@@ -13,6 +13,11 @@ export interface AssistedFunctionDefinition {
   requiresChartData: boolean
   requiresCommunications: boolean
   minSensorConfidence: number
+  maxDataLatencySec: number
+  /** Assistance level this function is configured to operate at in this POC when fully inside its envelope. */
+  configuredAssistanceLevel: AssistanceLevel
+  /** Ceiling this function may never exceed, regardless of conditions — L4 is never reached for any function in this POC. */
+  maxAssistanceLevel: AssistanceLevel
 }
 
 export const ASSISTED_FUNCTIONS: AssistedFunctionDefinition[] = [
@@ -29,11 +34,14 @@ export const ASSISTED_FUNCTIONS: AssistedFunctionDefinition[] = [
     requiresChartData: true,
     requiresCommunications: false,
     minSensorConfidence: 60,
+    maxDataLatencySec: 5,
+    configuredAssistanceLevel: 'L2',
+    maxAssistanceLevel: 'L2',
   },
   {
     id: 'voyage_speed_optimisation',
     label: 'Voyage Speed & Energy Optimisation',
-    description: 'Speed and routing recommendations balancing ETA window, fuel and weather exposure.',
+    description: 'Speed and routing recommendations balancing ETA window, fuel and weather exposure. A recommended speed only takes effect once explicitly authorised.',
     allowedModes: ['open_sea', 'coastal'],
     minVisibilityNm: 0,
     maxWaveHeightM: 5,
@@ -43,6 +51,9 @@ export const ASSISTED_FUNCTIONS: AssistedFunctionDefinition[] = [
     requiresChartData: true,
     requiresCommunications: false,
     minSensorConfidence: 50,
+    maxDataLatencySec: 30,
+    configuredAssistanceLevel: 'L3',
+    maxAssistanceLevel: 'L3',
   },
   {
     id: 'machinery_anomaly_detection',
@@ -57,6 +68,9 @@ export const ASSISTED_FUNCTIONS: AssistedFunctionDefinition[] = [
     requiresChartData: false,
     requiresCommunications: false,
     minSensorConfidence: 55,
+    maxDataLatencySec: 15,
+    configuredAssistanceLevel: 'L2',
+    maxAssistanceLevel: 'L2',
   },
   {
     id: 'predictive_maintenance',
@@ -71,6 +85,9 @@ export const ASSISTED_FUNCTIONS: AssistedFunctionDefinition[] = [
     requiresChartData: false,
     requiresCommunications: false,
     minSensorConfidence: 50,
+    maxDataLatencySec: 3600,
+    configuredAssistanceLevel: 'L2',
+    maxAssistanceLevel: 'L2',
   },
   {
     id: 'reefer_monitoring',
@@ -85,6 +102,9 @@ export const ASSISTED_FUNCTIONS: AssistedFunctionDefinition[] = [
     requiresChartData: false,
     requiresCommunications: false,
     minSensorConfidence: 55,
+    maxDataLatencySec: 60,
+    configuredAssistanceLevel: 'L2',
+    maxAssistanceLevel: 'L2',
   },
   {
     id: 'shore_sync_assistance',
@@ -99,6 +119,9 @@ export const ASSISTED_FUNCTIONS: AssistedFunctionDefinition[] = [
     requiresChartData: false,
     requiresCommunications: true,
     minSensorConfidence: 0,
+    maxDataLatencySec: 10,
+    configuredAssistanceLevel: 'L1',
+    maxAssistanceLevel: 'L2',
   },
 ]
 

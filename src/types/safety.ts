@@ -1,4 +1,4 @@
-import type { RiskLevel, SafetyVerdict } from './common'
+import type { AssistanceLevel, OddStatus, RiskLevel, SafetyVerdict } from './common'
 
 export type OddParameterKey =
   | 'visibility'
@@ -13,21 +13,31 @@ export type OddParameterKey =
   | 'machineryHealth'
   | 'communications'
   | 'sensorConfidence'
+  | 'dataLatency'
+  | 'dataQuality'
+  | 'operationalMode'
 
 export interface OddParameterStatus {
   key: OddParameterKey
   label: string
   value: string
-  withinLimit: boolean
+  status: OddStatus
+  /** 0 = at the limit, 1 = full margin. Used to render proximity to a limit, not just a boolean. */
+  marginFraction: number
   detail: string
 }
 
 export interface OddAssessment {
   functionId: string
   functionLabel: string
-  insideEnvelope: boolean
+  status: OddStatus
   limitingFactors: OddParameterStatus[]
+  nearLimitFactors: OddParameterStatus[]
   parameters: OddParameterStatus[]
+  /** Assistance level actually available right now given the envelope/system state, vs. the level configured for this function. */
+  availableAssistanceLevel: AssistanceLevel
+  configuredAssistanceLevel: AssistanceLevel
+  assistanceLimitingReason?: string
 }
 
 export interface SafetyValidationResult {

@@ -8,8 +8,8 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const variants: Record<string, string> = {
-  primary: 'bg-info-500 hover:bg-info-400 text-hull-950 border-transparent font-semibold',
-  secondary: 'bg-hull-700 hover:bg-hull-600 text-ink-100 border-hull-500/50',
+  primary: 'bg-orange-600 hover:bg-orange-500 text-white font-medium transition-colors shadow-lg shadow-orange-950/20 active:bg-orange-700 border-transparent',
+  secondary: 'border border-[#5BC0BE]/30 text-[#5BC0BE] hover:bg-[#5BC0BE]/10 transition-all',
   ghost: 'bg-transparent hover:bg-hull-700/60 text-ink-300 border-hull-500/40',
   danger: 'bg-critical-500/15 hover:bg-critical-500/25 text-critical-400 border-critical-500/40',
   success: 'bg-healthy-500/15 hover:bg-healthy-500/25 text-healthy-400 border-healthy-500/40',

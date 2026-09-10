@@ -6,7 +6,10 @@ import { advanceOwnPosition, courseToNextWaypoint, updateTargets } from './navig
 import { computeScenarioTargets, SCENARIO_RAMP_MINUTES } from './scenarioEffects'
 import { recomputeSystemHealth } from './health'
 import { buildDesiredAlarms, mergeAlarms } from './alarms'
+import { pushSample } from './telemetryHistory'
 import { validateRecommendation } from '@/safety-engine/validate'
+import { assessAllOdd } from '@/safety-engine/oddEngine'
+import { analyseMainEngine } from '@/decision-engine/machineryAnalytics'
 import {
   collisionRiskRecommendation,
   engineDegradationRecommendation,
@@ -49,7 +52,11 @@ export function tick(prev: SimulationState, dtMinutesBase: number): SimulationSt
   // --- navigation / position ---
   const distanceRemainingNm = Math.max(0, prev.voyagePlan.distanceRemainingNm - prev.snapshot.navigation.speedOverGroundKn * (dtMinutes / 60))
   const heading = courseToNextWaypoint(prev.snapshot.navigation.position, distanceRemainingNm)
-  const commandedSpeed = prev.voyagePlan.userModifiedSpeedKn ?? prev.voyagePlan.currentSpeedKn
+  // Anchor to the recommended cruising speed unless the Master has explicitly authorised a
+  // different speed. Anchoring to the previous tick's own resulting speed here would remove
+  // all mean reversion (target === current every tick) and let the random-walk noise term
+  // accumulate into unbounded drift over a long-running session.
+  const commandedSpeed = prev.voyagePlan.userModifiedSpeedKn ?? prev.voyagePlan.recommendedSpeedKn
   const speedOverGroundKn = stepTowards(prev.snapshot.navigation.speedOverGroundKn, commandedSpeed, 0.05, 0.2, rng)
   const position = advanceOwnPosition(prev.snapshot.navigation.position, heading, speedOverGroundKn, dtMinutes)
 
@@ -72,6 +79,7 @@ export function tick(prev: SimulationState, dtMinutesBase: number): SimulationSt
   const satelliteConfidence = clamp(stepTowards(prev.snapshot.communications.satelliteConfidence, targets.satelliteConfidence, 0.7, 0.08, rng), 0, 100)
   const commsDegraded = prev.activeScenario === 'communication_loss' && severity > 0.15
   const satelliteLinkUp = satelliteConfidence > 18
+  const shoreSyncLatencySec = clamp(stepTowards(prev.snapshot.communications.shoreSyncLatencySec, satelliteLinkUp ? 2.1 : 45, 1.5, 0.15, rng), 1, 90)
 
   // --- fuel / energy ---
   const baselineConsumption = prev.snapshot.fuelEnergy.baselineConsumptionRateTonPerDay
@@ -92,9 +100,12 @@ export function tick(prev: SimulationState, dtMinutesBase: number): SimulationSt
       const actualTempC = stepTowards(unit.actualTempC, target, 0.15, 0.08, rng)
       const deviation = Math.abs(actualTempC - unit.setPointC)
       const risk: HealthLevel = deviation > 4 ? 'critical' : deviation > 2 ? 'warning' : deviation > 0.8 ? 'advisory' : 'healthy'
+      const ambientTempC = stepTowards(unit.ambientTempC, 29, 0.3, 0.1, rng)
       return {
         ...unit,
         actualTempC,
+        returnTempC: actualTempC + 1.8 + deviation * 0.4,
+        ambientTempC,
         trend: actualTempC > unit.setPointC + 0.3 ? ('rising' as const) : actualTempC < unit.setPointC - 0.3 ? ('falling' as const) : ('stable' as const),
         powerStatus: deviation > 3 ? ('power_fluctuation' as const) : ('on_power' as const),
         alarmCount: deviation > 0.8 ? unit.alarmCount + (rng() > 0.7 ? 1 : 0) : unit.alarmCount,
@@ -102,7 +113,8 @@ export function tick(prev: SimulationState, dtMinutesBase: number): SimulationSt
       }
     }
     const actualTempC = stepTowards(unit.actualTempC, unit.setPointC, 0.05, 0.15, rng)
-    return { ...unit, actualTempC, trend: 'stable' as const, risk: 'healthy' as const }
+    const ambientTempC = stepTowards(unit.ambientTempC, 29, 0.3, 0.1, rng)
+    return { ...unit, actualTempC, returnTempC: actualTempC + 1.8, ambientTempC, trend: 'stable' as const, risk: 'healthy' as const }
   })
 
   // --- targets (other vessels) ---
@@ -120,6 +132,7 @@ export function tick(prev: SimulationState, dtMinutesBase: number): SimulationSt
 
   // --- assemble snapshot ---
   const simTimeIso = new Date(new Date(prev.snapshot.simTimeIso).getTime() + dtMinutes * 60_000).toISOString()
+  const simTimeMs = new Date(simTimeIso).getTime()
 
   const snapshotDraft = {
     ...prev.snapshot,
@@ -164,6 +177,7 @@ export function tick(prev: SimulationState, dtMinutesBase: number): SimulationSt
       ...prev.snapshot.communications,
       satelliteLinkUp,
       satelliteConfidence,
+      shoreSyncLatencySec,
       lastShoreSyncIso: satelliteLinkUp ? simTimeIso : prev.snapshot.communications.lastShoreSyncIso,
     },
     environment: {
@@ -176,7 +190,19 @@ export function tick(prev: SimulationState, dtMinutesBase: number): SimulationSt
     },
   }
 
-  const { systemHealth, overallHealth } = recomputeSystemHealth(snapshotDraft, commsDegraded, gnssDegraded)
+  // --- telemetry history (genuine time-series backing for trend/anomaly analytics) ---
+  const telemetryHistory = {
+    exhaustTempDeviationC: pushSample(prev.telemetryHistory.exhaustTempDeviationC, simTimeMs, exhaustTempDeviationC),
+    lubOilPressureBar: pushSample(prev.telemetryHistory.lubOilPressureBar, simTimeMs, lubOilPressureBar),
+    fuelConsumptionRateTonPerDay: pushSample(prev.telemetryHistory.fuelConsumptionRateTonPerDay, simTimeMs, fuelConsumptionRateTonPerDay),
+    gnssConfidence: pushSample(prev.telemetryHistory.gnssConfidence, simTimeMs, gnssConfidence),
+    satelliteConfidence: pushSample(prev.telemetryHistory.satelliteConfidence, simTimeMs, satelliteConfidence),
+    blackoutRiskScore: pushSample(prev.telemetryHistory.blackoutRiskScore, simTimeMs, blackoutRiskScore),
+  }
+
+  const machineryAnalysis = analyseMainEngine(snapshotDraft, telemetryHistory)
+
+  const { systemHealth, overallHealth } = recomputeSystemHealth(snapshotDraft, machineryAnalysis, commsDegraded, gnssDegraded)
   const snapshot = { ...snapshotDraft, systemHealth, overallHealth }
 
   // --- audit: system state transitions ---
@@ -187,6 +213,24 @@ export function tick(prev: SimulationState, dtMinutesBase: number): SimulationSt
         kind: 'system_state_change',
         event: `${area.area.replace(/_/g, ' ')} system state changed from ${prevArea.state.toUpperCase()} to ${area.state.toUpperCase()}.`,
         outcome: area.state,
+      })
+      if (area.state === 'fallback' && (area.area === 'communications' || area.area === 'navigation')) {
+        const affected = area.area === 'communications' ? 'Shore-Assisted Support Functions become unavailable; onboard assistance continues.' : 'Navigation assistance restricts to monitoring-level pending recovery.'
+        pushAudit({ kind: 'fallback_transition', event: `Fallback engaged for ${area.area.replace(/_/g, ' ')}. ${affected}`, outcome: 'fallback' })
+      }
+    }
+  }
+
+  // --- audit: assistance-level changes per assisted function ---
+  const prevOdd = assessAllOdd(prev.snapshot)
+  const currentOdd = assessAllOdd(snapshot)
+  for (const current of currentOdd) {
+    const before = prevOdd.find((o) => o.functionId === current.functionId)
+    if (before && before.availableAssistanceLevel !== current.availableAssistanceLevel) {
+      pushAudit({
+        kind: 'assistance_level_change',
+        event: `${current.functionLabel}: available assistance level changed from ${before.availableAssistanceLevel} to ${current.availableAssistanceLevel}.${current.assistanceLimitingReason ? ` ${current.assistanceLimitingReason}` : ''}`,
+        outcome: current.availableAssistanceLevel,
       })
     }
   }
@@ -206,6 +250,7 @@ export function tick(prev: SimulationState, dtMinutesBase: number): SimulationSt
     if (condition && !scenarioTriggers[key]) {
       scenarioTriggers[key] = true
       const { functionId, ...content } = build()
+      const oddAssessment = currentOdd.find((o) => o.functionId === functionId)
       const safetyValidation = validateRecommendation({
         functionId,
         snapshot,
@@ -218,6 +263,9 @@ export function tick(prev: SimulationState, dtMinutesBase: number): SimulationSt
         timestampIso: simTimeIso,
         status: 'awaiting_decision',
         safetyValidation,
+        oddAssessment,
+        operationalMode: snapshot.operationalMode,
+        oddStatus: oddAssessment?.status ?? 'inside',
         scenarioId: prev.activeScenario,
       }
       recommendations.unshift(rec)
@@ -225,7 +273,7 @@ export function tick(prev: SimulationState, dtMinutesBase: number): SimulationSt
         kind: 'recommendation_generated',
         event: `Recommendation generated: ${rec.title}`,
         recommendationId: rec.id,
-        modelOrRuleId: rec.modelId,
+        modelOrRuleId: `${rec.modelId} ${rec.modelVersion}`,
         confidencePercent: rec.confidencePercent,
         safetyValidationResult: rec.safetyValidation.verdict,
       })
@@ -240,7 +288,7 @@ export function tick(prev: SimulationState, dtMinutesBase: number): SimulationSt
     }
   }
 
-  maybeFire('engine_degradation_rec', prev.activeScenario === 'engine_degradation' && severity > 0.45, () => engineDegradationRecommendation(snapshot, severity))
+  maybeFire('engine_degradation_rec', prev.activeScenario === 'engine_degradation' && severity > 0.45, () => engineDegradationRecommendation(snapshot, machineryAnalysis, severity))
 
   maybeFire(
     'collision_risk_rec',
@@ -309,6 +357,8 @@ export function tick(prev: SimulationState, dtMinutesBase: number): SimulationSt
     scenarioElapsedMinutes,
     scenarioTriggers,
     nextIdCounter: idCounter,
+    telemetryHistory,
+    machineryAnalysis,
   }
 }
 

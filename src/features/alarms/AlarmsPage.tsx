@@ -31,7 +31,7 @@ export function AlarmsPage() {
         ) : (
           <div className="flex flex-col gap-3">
             {correlated.map((c) => (
-              <div key={c.id} className="rounded-md border border-panel-border bg-panel-raised p-3">
+              <div key={c.id} className="rounded-sm border border-panel-border bg-panel-raised p-3">
                 <div className="flex items-center justify-between">
                   <div className="text-sm font-semibold text-ink-100">{c.title}</div>
                   <HealthBadge level={c.priority} />

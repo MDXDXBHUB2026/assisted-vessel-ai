@@ -1,6 +1,6 @@
 import type { HealthLevel, SystemHealthSummary, SystemState, VesselSnapshot } from '@/types'
 import { worstHealth } from '@/types'
-import { analyseMainEngine } from '@/decision-engine/machineryAnalytics'
+import type { MachineryAnalysis } from '@/decision-engine/machineryAnalytics'
 
 function levelFromScore(score: number): HealthLevel {
   if (score >= 85) return 'healthy'
@@ -9,10 +9,14 @@ function levelFromScore(score: number): HealthLevel {
   return 'critical'
 }
 
-export function recomputeSystemHealth(snapshot: VesselSnapshot, commsDegraded: boolean, gnssDegraded: boolean): { systemHealth: SystemHealthSummary[]; overallHealth: HealthLevel } {
-  const engineAnalysis = analyseMainEngine(snapshot)
-  const engineHealth = levelFromScore(engineAnalysis.healthScore)
-  const engineState: SystemState = engineAnalysis.anomalyScore > 65 ? 'contingency' : engineAnalysis.anomalyScore > 35 ? 'degraded' : 'normal'
+export function recomputeSystemHealth(
+  snapshot: VesselSnapshot,
+  machineryAnalysis: MachineryAnalysis,
+  commsDegraded: boolean,
+  gnssDegraded: boolean,
+): { systemHealth: SystemHealthSummary[]; overallHealth: HealthLevel } {
+  const engineHealth = levelFromScore(machineryAnalysis.healthScore)
+  const engineState: SystemState = machineryAnalysis.anomalyScore > 65 ? 'contingency' : machineryAnalysis.anomalyScore > 35 ? 'degraded' : 'normal'
 
   const navConfidence = snapshot.navigation.gnssConfidence
   const navHealth: HealthLevel = gnssDegraded ? (navConfidence < 40 ? 'critical' : navConfidence < 65 ? 'warning' : 'advisory') : 'healthy'
@@ -44,8 +48,8 @@ export function recomputeSystemHealth(snapshot: VesselSnapshot, commsDegraded: b
       area: 'main_engine',
       health: engineHealth,
       state: engineState,
-      headline: engineAnalysis.probableCondition,
-      confidence: engineAnalysis.confidencePercent,
+      headline: machineryAnalysis.probableCondition,
+      confidence: machineryAnalysis.confidencePercent,
     },
     {
       area: 'auxiliary_machinery',

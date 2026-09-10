@@ -18,6 +18,9 @@ import {
   Network,
   BookOpen,
   SlidersHorizontal,
+  Activity,
+  FileCheck2,
+  TrendingUp,
 } from 'lucide-react'
 import type { ReactNode } from 'react'
 
@@ -28,7 +31,7 @@ interface NavItem {
 }
 
 const VESSEL_ITEMS: NavItem[] = [
-  { to: '/vessel/console', label: 'Assisted Console', icon: <LayoutGrid size={16} /> },
+  { to: '/vessel/console', label: 'Operations Canvas', icon: <LayoutGrid size={16} /> },
   { to: '/vessel/digital-twin', label: 'Digital Twin', icon: <Boxes size={16} /> },
   { to: '/vessel/navigation', label: 'Navigation', icon: <Compass size={16} /> },
   { to: '/vessel/machinery', label: 'Machinery', icon: <Gauge size={16} /> },
@@ -37,7 +40,7 @@ const VESSEL_ITEMS: NavItem[] = [
   { to: '/vessel/cargo', label: 'Cargo / Reefer', icon: <Snowflake size={16} /> },
   { to: '/vessel/safety', label: 'Safety Intelligence', icon: <ShieldAlert size={16} /> },
   { to: '/vessel/alarms', label: 'Alarm Management', icon: <BellRing size={16} /> },
-  { to: '/vessel/envelope', label: 'Operational Envelope', icon: <ScanLine size={16} /> },
+  { to: '/vessel/envelope', label: 'Envelope & Assistance', icon: <ScanLine size={16} /> },
   { to: '/vessel/decisions', label: 'Human Decision Centre', icon: <ClipboardCheck size={16} /> },
   { to: '/vessel/audit', label: 'Audit Trail', icon: <History size={16} /> },
   { to: '/vessel/copilot', label: 'Operations Copilot', icon: <Bot size={16} /> },
@@ -49,6 +52,10 @@ const SHORE_ITEMS: NavItem[] = [{ to: '/shore', label: 'Shore Operations Centre'
 const INFO_ITEMS: NavItem[] = [
   { to: '/architecture', label: 'System Architecture', icon: <Network size={16} /> },
   { to: '/conops', label: 'Concept of Operations', icon: <BookOpen size={16} /> },
+  { to: '/assurance/system', label: 'System Assurance', icon: <Activity size={16} /> },
+  { to: '/assurance/programme', label: 'Engineering Assurance', icon: <FileCheck2 size={16} /> },
+  { to: '/assurance/requirements', label: 'Requirements & Verification', icon: <ClipboardCheck size={16} /> },
+  { to: '/value', label: 'Operational Value', icon: <TrendingUp size={16} /> },
 ]
 
 export function SideNav({ section }: { section: 'vessel' | 'shore' }) {
@@ -64,7 +71,7 @@ export function SideNav({ section }: { section: 'vessel' | 'shore' }) {
         </div>
       </div>
       <div>
-        <div className="mb-1.5 px-2 text-[10px] font-semibold uppercase tracking-widest text-ink-700">Engineering</div>
+        <div className="mb-1.5 px-2 text-[10px] font-semibold uppercase tracking-widest text-ink-700">Engineering / Assurance</div>
         <div className="flex flex-col gap-0.5">
           {INFO_ITEMS.map((item) => (
             <SideLink key={item.to} item={item} />
@@ -81,7 +88,7 @@ function SideLink({ item }: { item: NavItem }) {
     <NavLink
       to={item.to}
       className={({ isActive }) =>
-        clsx('flex items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] font-medium transition-colors', isActive ? 'bg-info-500/10 text-info-400' : 'text-ink-400 hover:bg-hull-700/60 hover:text-ink-100')
+        clsx('flex items-center gap-2.5 rounded-sm px-2.5 py-2 text-[13px] font-medium transition-colors', isActive ? 'bg-info-500/10 text-info-400' : 'text-ink-400 hover:bg-hull-700/60 hover:text-ink-100')
       }
     >
       {item.icon}

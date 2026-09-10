@@ -5,7 +5,7 @@ export function Modal({ title, onClose, children, wide }: { title: ReactNode; on
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-hull-950/70 p-4 backdrop-blur-sm" onClick={onClose}>
       <div
-        className={`max-h-[88vh] w-full ${wide ? 'max-w-3xl' : 'max-w-lg'} overflow-y-auto rounded-lg border border-panel-border bg-panel shadow-2xl`}
+        className={`max-h-[88vh] w-full ${wide ? 'max-w-3xl' : 'max-w-lg'} overflow-y-auto rounded-sm border border-panel-border bg-panel shadow-2xl`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="sticky top-0 flex items-center justify-between border-b border-panel-border bg-panel px-4 py-3">

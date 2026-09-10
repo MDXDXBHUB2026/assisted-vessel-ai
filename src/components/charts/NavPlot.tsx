@@ -32,7 +32,7 @@ export function NavPlot({ own, ownHeading, targets, routeWaypoints }: { own: Geo
       </defs>
       <rect width={SIZE} height={SIZE} fill="url(#navgrid)" />
 
-      <polyline points={routePoints.map((p) => `${p.x},${p.y}`).join(' ')} fill="none" stroke="#22b8c4" strokeWidth={1.5} strokeDasharray="4 4" opacity={0.5} />
+      <polyline points={routePoints.map((p) => `${p.x},${p.y}`).join(' ')} fill="none" stroke="#5BC0BE" strokeWidth={1.5} strokeDasharray="4 4" opacity={0.5} />
 
       {targets.map((t) => {
         const p = toXY(t.position)
@@ -50,7 +50,7 @@ export function NavPlot({ own, ownHeading, targets, routeWaypoints }: { own: Geo
       <g>
         <polygon
           points={`${ownXY.x},${ownXY.y - 9} ${ownXY.x - 6},${ownXY.y + 7} ${ownXY.x + 6},${ownXY.y + 7}`}
-          fill="#35d0d6"
+          fill="#5BC0BE"
           transform={`rotate(${ownHeading}, ${ownXY.x}, ${ownXY.y})`}
         />
         <text

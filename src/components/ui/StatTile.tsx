@@ -10,7 +10,7 @@ export function StatTile({ label, value, unit, tone = 'neutral', sub, icon }: { 
     info: 'text-info-400',
   }
   return (
-    <div className="rounded-lg border border-panel-border bg-panel-raised px-3.5 py-3">
+    <div className="rounded-sm border border-panel-border bg-panel-raised px-3.5 py-3">
       <div className="flex items-center justify-between">
         <div className="text-[11px] font-medium uppercase tracking-wide text-ink-500">{label}</div>
         {icon}

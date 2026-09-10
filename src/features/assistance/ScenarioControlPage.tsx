@@ -58,7 +58,7 @@ export function ScenarioControlPage() {
           <button
             key={s.id}
             onClick={() => setScenario(s.id)}
-            className={`rounded-lg border p-4 text-left transition-colors ${
+            className={`rounded-sm border p-4 text-left transition-colors ${
               activeScenario === s.id ? 'border-info-500/50 bg-info-500/10' : 'border-panel-border bg-panel hover:border-hull-500/60'
             }`}
           >

@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import { useSimulationStore } from '@/store/simulationStore'
 import { Panel } from '@/components/ui/Panel'
-import { RiskBadge, VerdictBadge, Pill } from '@/components/ui/Badge'
+import { RiskBadge, VerdictBadge, Pill, ProvenanceTag, OddStatusBadge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
-import { AUTHORITY_LABELS, type Recommendation } from '@/types'
+import { Tabs } from '@/components/ui/Tabs'
+import { resolveCopilotAdapter } from '@/services/adapters/copilotAdapter'
+import { AUTHORITY_LABELS, ANALYTICAL_METHOD_LABELS, OPERATIONAL_MODE_LABELS, type Recommendation } from '@/types'
 import { ClipboardCheck } from 'lucide-react'
 
 const DECISION_LABELS: Record<string, string> = {
@@ -18,10 +20,11 @@ const DECISION_LABELS: Record<string, string> = {
 }
 
 export function DecisionCentrePage() {
-  const recommendations = useSimulationStore((s) => s.recommendations)
-  const decideRecommendation = useSimulationStore((s) => s.decideRecommendation)
+  const state = useSimulationStore()
+  const { recommendations, decideRecommendation } = state
   const [active, setActive] = useState<Recommendation | null>(null)
   const [comment, setComment] = useState('')
+  const [understanding, setUnderstanding] = useState<string | null>(null)
 
   const awaiting = recommendations.filter((r) => r.status === 'awaiting_decision')
   const decided = recommendations.filter((r) => r.status !== 'awaiting_decision')
@@ -31,6 +34,13 @@ export function DecisionCentrePage() {
     decideRecommendation(active.id, decision, comment || `${decision.replace(/_/g, ' ')} via Human Decision Centre`, active.requiredAuthority)
     setActive(null)
     setComment('')
+    setUnderstanding(null)
+  }
+
+  const askUnderstand = async (rec: Recommendation) => {
+    const adapter = resolveCopilotAdapter(state.pocMode)
+    const response = await adapter.ask(`Why was "${rec.title}" recommended, in plain terms?`, state)
+    setUnderstanding(response.answer)
   }
 
   return (
@@ -48,7 +58,14 @@ export function DecisionCentrePage() {
         ) : (
           <div className="flex flex-col gap-3">
             {awaiting.map((r) => (
-              <RecommendationCard key={r.id} rec={r} onOpen={() => setActive(r)} />
+              <RecommendationCard
+                key={r.id}
+                rec={r}
+                onOpen={() => {
+                  setActive(r)
+                  setUnderstanding(null)
+                }}
+              />
             ))}
           </div>
         )}
@@ -85,14 +102,21 @@ export function DecisionCentrePage() {
 
       {active && (
         <Modal title={active.title} onClose={() => setActive(null)} wide>
-          <RecommendationDetail rec={active} />
+          <Tabs
+            items={[
+              { key: 'understand', label: 'Understand', content: <UnderstandTab rec={active} understanding={understanding} onAsk={() => askUnderstand(active)} /> },
+              { key: 'evidence', label: 'Evidence', content: <EvidenceTab rec={active} /> },
+              { key: 'simulate', label: 'Simulate', content: <SimulateTab rec={active} /> },
+              { key: 'safety', label: 'Safety Validation', content: <SafetyTab rec={active} /> },
+            ]}
+          />
           <div className="mt-4 border-t border-panel-border pt-4">
             <label className="mb-1 block text-xs font-medium text-ink-400">Decision comment</label>
             <textarea
               value={comment}
               onChange={(e) => setComment(e.target.value)}
               rows={2}
-              className="w-full rounded-md border border-hull-500/40 bg-hull-800 px-2.5 py-2 text-sm text-ink-100"
+              className="w-full rounded-sm border border-hull-500/40 bg-hull-800 px-2.5 py-2 text-sm text-ink-100"
               placeholder="Optional comment recorded to the audit trail"
             />
             <div className="mt-3 flex flex-wrap gap-2">
@@ -102,6 +126,7 @@ export function DecisionCentrePage() {
               <Button variant="ghost" size="sm" onClick={() => decide('info_requested')}>REQUEST MORE INFORMATION</Button>
               <Button variant="ghost" size="sm" onClick={() => decide('shore_support_requested')}>REQUEST SHORE SUPPORT</Button>
             </div>
+            <p className="mt-2 text-[11px] text-ink-700">Responsible operational authority: {AUTHORITY_LABELS[active.requiredAuthority]}.</p>
           </div>
         </Modal>
       )}
@@ -111,7 +136,7 @@ export function DecisionCentrePage() {
 
 function RecommendationCard({ rec, onOpen }: { rec: Recommendation; onOpen: () => void }) {
   return (
-    <button onClick={onOpen} className="w-full rounded-md border border-panel-border bg-panel-raised p-3 text-left transition-colors hover:border-info-500/40">
+    <button onClick={onOpen} className="w-full rounded-sm border border-panel-border bg-panel-raised p-3 text-left transition-colors hover:border-info-500/40">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-sm font-semibold text-ink-100">{rec.title}</span>
         <div className="flex items-center gap-2">
@@ -125,15 +150,18 @@ function RecommendationCard({ rec, onOpen }: { rec: Recommendation; onOpen: () =
   )
 }
 
-function RecommendationDetail({ rec }: { rec: Recommendation }) {
+function UnderstandTab({ rec, understanding, onAsk }: { rec: Recommendation; understanding: string | null; onAsk: () => void }) {
   return (
     <div className="flex flex-col gap-3 text-sm">
       <div className="grid grid-cols-2 gap-3 text-xs sm:grid-cols-3">
         <Field label="Recommendation ID" value={rec.id} />
         <Field label="Timestamp" value={rec.timestampIso.slice(0, 16).replace('T', ' ')} />
         <Field label="Vessel Function" value={rec.vesselFunction.replace(/_/g, ' ')} />
+        <Field label="Analytical Method" value={ANALYTICAL_METHOD_LABELS[rec.analyticalMethod]} />
+        <Field label="Model / Version" value={`${rec.modelId} ${rec.modelVersion}`} />
         <Field label="Confidence" value={`${rec.confidencePercent}%`} />
-        <Field label="Model / Rule" value={rec.modelId} />
+        <Field label="Data Quality" value={rec.dataQuality} />
+        <Field label="Operational Mode" value={OPERATIONAL_MODE_LABELS[rec.operationalMode]} />
         <Field label="Required Authority" value={AUTHORITY_LABELS[rec.requiredAuthority]} />
       </div>
       <div>
@@ -144,14 +172,85 @@ function RecommendationDetail({ rec }: { rec: Recommendation }) {
         <div className="text-[11px] uppercase tracking-wide text-ink-500">Recommended Response</div>
         <p className="mt-0.5 text-ink-100">{rec.recommendedResponse}</p>
       </div>
-      <div>
-        <div className="text-[11px] uppercase tracking-wide text-ink-500">Expected Benefit</div>
-        <p className="mt-0.5 text-ink-100">{rec.expectedBenefit}</p>
+      <div className="rounded-sm border border-panel-border bg-panel-raised p-3">
+        <div className="mb-1 flex items-center justify-between">
+          <span className="text-xs font-semibold uppercase tracking-wide text-ink-500">Ask the Copilot to explain this recommendation</span>
+          <Button size="sm" variant="secondary" onClick={onAsk}>ASK</Button>
+        </div>
+        {understanding && (
+          <>
+            <p className="mt-2 text-xs text-ink-200">{understanding}</p>
+            <div className="mt-1.5">
+              <ProvenanceTag provenance="calculated" />
+            </div>
+          </>
+        )}
       </div>
-      <div className="rounded-md border border-panel-border bg-panel-raised p-3">
+    </div>
+  )
+}
+
+function EvidenceTab({ rec }: { rec: Recommendation }) {
+  return (
+    <div className="flex flex-col gap-3 text-sm">
+      <div>
+        <div className="mb-1 text-[11px] uppercase tracking-wide text-ink-500">Source Systems</div>
+        <div className="flex flex-wrap gap-1.5">
+          {rec.sourceSystems.map((s) => (
+            <span key={s} className="rounded border border-hull-500/40 bg-hull-800 px-2 py-0.5 text-[11px] text-ink-300">{s}</span>
+          ))}
+        </div>
+      </div>
+      <div>
+        <div className="mb-1 text-[11px] uppercase tracking-wide text-ink-500">Supporting Evidence</div>
+        <ul className="flex flex-col gap-1.5">
+          {rec.evidence.map((e) => (
+            <li key={e.label} className="flex items-center justify-between gap-2 rounded-sm border border-panel-border bg-panel-raised px-2.5 py-1.5 text-xs">
+              <span className="text-ink-300">
+                <span className="font-medium text-ink-100">{e.label}:</span> {e.value} <span className="text-ink-500">({e.sourceSystem})</span>
+              </span>
+              <ProvenanceTag provenance={e.provenance} />
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  )
+}
+
+function SimulateTab({ rec }: { rec: Recommendation }) {
+  return (
+    <div className="grid grid-cols-1 gap-3 text-sm md:grid-cols-2">
+      <div className="rounded-sm border border-healthy-500/30 bg-healthy-500/5 p-3">
+        <div className="text-xs font-semibold uppercase tracking-wide text-healthy-400">If Accepted</div>
+        <p className="mt-1 text-xs text-ink-200">{rec.expectedBenefit}</p>
+        <div className="mt-2 text-[11px] uppercase tracking-wide text-ink-500">Recommended response</div>
+        <p className="text-xs text-ink-300">{rec.recommendedResponse}</p>
+      </div>
+      <div className="rounded-sm border border-critical-500/30 bg-critical-500/5 p-3">
+        <div className="text-xs font-semibold uppercase tracking-wide text-critical-400">If Not Acted Upon</div>
+        <p className="mt-1 text-xs text-ink-200">{rec.potentialConsequence}</p>
+      </div>
+      <div className="rounded-sm border border-panel-border bg-panel-raised p-3 md:col-span-2">
+        <div className="text-[11px] uppercase tracking-wide text-ink-500">Alternative Action</div>
+        <p className="mt-0.5 text-xs text-ink-300">{rec.alternativeAction}</p>
+        <div className="mt-2 text-[11px] uppercase tracking-wide text-ink-500">Fallback Option</div>
+        <p className="mt-0.5 text-xs text-ink-300">{rec.fallbackOption}</p>
+      </div>
+    </div>
+  )
+}
+
+function SafetyTab({ rec }: { rec: Recommendation }) {
+  return (
+    <div className="flex flex-col gap-3 text-sm">
+      <div className="rounded-sm border border-panel-border bg-panel-raised p-3">
         <div className="mb-2 flex items-center justify-between">
           <span className="text-xs font-semibold uppercase tracking-wide text-ink-500">Safety Validation</span>
-          <VerdictBadge verdict={rec.safetyValidation.verdict} />
+          <div className="flex items-center gap-2">
+            <OddStatusBadge status={rec.oddStatus} />
+            <VerdictBadge verdict={rec.safetyValidation.verdict} />
+          </div>
         </div>
         <ul className="flex flex-col gap-1">
           {rec.safetyValidation.checks.map((c) => (
@@ -165,16 +264,7 @@ function RecommendationDetail({ rec }: { rec: Recommendation }) {
         </ul>
         {rec.safetyValidation.reason && <p className="mt-2 text-xs text-warning-400">{rec.safetyValidation.reason}</p>}
       </div>
-      <div>
-        <div className="mb-1 text-[11px] uppercase tracking-wide text-ink-500">Supporting Evidence</div>
-        <ul className="flex flex-col gap-1">
-          {rec.evidence.map((e) => (
-            <li key={e.label} className="text-xs text-ink-300">
-              <span className="font-medium text-ink-100">{e.label}:</span> {e.value} <span className="text-ink-500">({e.sourceSystem})</span>
-            </li>
-          ))}
-        </ul>
-      </div>
+      <p className="text-[11px] text-ink-700">This verdict is produced entirely by the deterministic safety engine. No generative-AI output — including the Understand tab above — can influence it.</p>
     </div>
   )
 }

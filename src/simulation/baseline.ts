@@ -102,16 +102,21 @@ export function buildBaselineSnapshot(): VesselSnapshot {
 
 function buildBaselineCargoReefer(): CargoReeferState {
   const categories = ['Perishable — Produce', 'Perishable — Dairy', 'Pharmaceutical', 'Frozen Protein', 'General Chilled']
-  const units: ReeferUnit[] = Array.from({ length: 12 }).map((_, i) => ({
-    containerRef: `RFRU-${(4000000 + i * 137).toString().slice(0, 7)}`,
-    cargoCategory: categories[i % categories.length] ?? 'General Chilled',
-    setPointC: [-18, 2, 4, -20, 4][i % 5] ?? 2,
-    actualTempC: [-18, 2, 4, -20, 4][i % 5] ?? 2,
-    trend: 'stable',
-    powerStatus: 'on_power',
-    alarmCount: 0,
-    risk: 'healthy',
-  }))
+  const units: ReeferUnit[] = Array.from({ length: 12 }).map((_, i) => {
+    const setPoint = [-18, 2, 4, -20, 4][i % 5] ?? 2
+    return {
+      containerRef: `RFRU-${(4000000 + i * 137).toString().slice(0, 7)}`,
+      cargoCategory: categories[i % categories.length] ?? 'General Chilled',
+      setPointC: setPoint,
+      actualTempC: setPoint,
+      returnTempC: setPoint + 1.8,
+      ambientTempC: 29,
+      trend: 'stable',
+      powerStatus: 'on_power',
+      alarmCount: 0,
+      risk: 'healthy',
+    }
+  })
 
   return {
     totalContainers: 13400,

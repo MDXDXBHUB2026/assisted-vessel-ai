@@ -1,10 +1,16 @@
 import { create } from 'zustand'
-import type { OperationalMode, RequiredAuthority, ScenarioId, ShoreCase, ShoreFunction } from '@/types'
+import type { OperationalMode, PocExecutionMode, RequiredAuthority, ScenarioId, ShoreCase, ShoreFunction } from '@/types'
 import { OPERATIONAL_MODE_LABELS } from '@/types'
-import { buildInitialSimulationState, type SimulationState } from '@/simulation/state'
+import { buildInitialSimulationState, type AdapterStatuses, type SimulationState } from '@/simulation/state'
 import { tick } from '@/simulation/engine'
+import { readStoredPocMode, writeStoredPocMode } from '@/services/pocMode'
+import { resolveTelemetryAdapter } from '@/services/adapters/telemetryAdapter'
+import { resolveWeatherAdapter } from '@/services/adapters/weatherAdapter'
+import { resolveSystemHealthAdapter } from '@/services/adapters/systemHealthAdapter'
+import { resolveDocumentSearchAdapter } from '@/services/adapters/documentSearchAdapter'
+import { connectedAuditAdapter } from '@/services/adapters/auditAdapter'
+import { connectedShoreCaseAdapter } from '@/services/adapters/shoreCaseAdapter'
 
-/** Simulated minutes advanced per real second at 1x speed. */
 export const BASE_DT_MINUTES_PER_SECOND = 0.5
 
 interface SimulationStore extends SimulationState {
@@ -17,6 +23,9 @@ interface SimulationStore extends SimulationState {
   setOperationalMode: (mode: OperationalMode) => void
   setVoyageSpeed: (speedKn: number | null) => void
   acceptVoyageRecommendation: () => void
+
+  setPocMode: (mode: PocExecutionMode) => void
+  probeConnectedAdapters: () => Promise<void>
 
   decideRecommendation: (
     id: string,
@@ -35,6 +44,7 @@ interface SimulationStore extends SimulationState {
 
 export const useSimulationStore = create<SimulationStore>((set, get) => ({
   ...buildInitialSimulationState(),
+  pocMode: readStoredPocMode(),
 
   stepIfPlaying: (elapsedSeconds) => {
     const state = get()
@@ -49,8 +59,10 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
   resetEnvironment: () => {
     const fresh = buildInitialSimulationState()
     const prevAudit = get().auditEvents
+    const pocMode = get().pocMode
     set({
       ...fresh,
+      pocMode,
       auditEvents: [
         {
           id: `AUD-RESET-${Date.now()}`,
@@ -64,6 +76,7 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
         ...prevAudit,
       ],
     })
+    void get().probeConnectedAdapters()
   },
 
   setScenario: (scenario) => {
@@ -137,7 +150,7 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
           operatingMode: OPERATIONAL_MODE_LABELS[state.snapshot.operationalMode],
           scenarioId: state.activeScenario === 'normal_operations' ? null : state.activeScenario,
           kind: 'human_decision',
-          event: 'Master accepted recommended voyage speed profile.',
+          event: 'Master accepted recommended voyage speed profile — L3 supervised execution: speed profile applied following explicit authorisation.',
           humanDecision: 'accepted',
           responsibleRole: 'master',
           outcome: 'Recommended speed adopted',
@@ -145,6 +158,52 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
         ...state.auditEvents,
       ],
     })
+  },
+
+  setPocMode: (mode) => {
+    writeStoredPocMode(mode)
+    const state = get()
+    set({
+      pocMode: mode,
+      adapterStatuses: mode === 'offline'
+        ? { telemetry: 'simulated', weather: 'simulated', copilot: 'simulated', documents: 'simulated', systemHealthApi: 'simulated', audit: 'simulated', shoreCases: 'simulated' }
+        : { ...state.adapterStatuses, telemetry: 'connecting', weather: 'connecting', copilot: 'connecting', documents: 'connecting', systemHealthApi: 'connecting', audit: 'connecting', shoreCases: 'connecting' },
+      auditEvents: [
+        {
+          id: `AUD-POC-${Date.now()}`,
+          timestampIso: state.snapshot.simTimeIso,
+          operatingMode: OPERATIONAL_MODE_LABELS[state.snapshot.operationalMode],
+          scenarioId: null,
+          kind: 'simulation',
+          event: `POC execution mode set to ${mode.toUpperCase()}.`,
+          outcome: mode,
+        },
+        ...state.auditEvents,
+      ],
+    })
+    if (mode === 'connected') void get().probeConnectedAdapters()
+  },
+
+  probeConnectedAdapters: async () => {
+    const state = get()
+    if (state.pocMode !== 'connected') return
+    const [telemetry, weather, systemHealthApi, documents] = await Promise.all([
+      resolveTelemetryAdapter('connected').checkStatus(),
+      resolveWeatherAdapter('connected').checkStatus(),
+      resolveSystemHealthAdapter('connected').checkStatus(),
+      resolveDocumentSearchAdapter('connected').checkStatus(),
+    ])
+    const next: AdapterStatuses = {
+      telemetry,
+      weather,
+      copilot: telemetry === 'connected' ? 'connected' : 'unavailable_fallback',
+      documents,
+      systemHealthApi,
+      audit: systemHealthApi === 'connected' ? 'connected' : 'unavailable_fallback',
+      shoreCases: systemHealthApi === 'connected' ? 'connected' : 'unavailable_fallback',
+    }
+    // Only apply if still in connected mode (user may have switched back to offline meanwhile).
+    if (get().pocMode === 'connected') set({ adapterStatuses: next })
   },
 
   decideRecommendation: (id, decision, comment, role) => {
@@ -193,6 +252,20 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
       ],
     })
 
+    if (state.pocMode === 'connected') {
+      void connectedAuditAdapter.append({
+        id: `mirror-${id}-${Date.now()}`,
+        timestampIso: state.snapshot.simTimeIso,
+        operatingMode: OPERATIONAL_MODE_LABELS[state.snapshot.operationalMode],
+        scenarioId: state.activeScenario,
+        kind: 'human_decision',
+        event: `Decision recorded for "${rec.title}": ${decision.replace(/_/g, ' ')}.`,
+        recommendationId: id,
+        humanDecision: decision,
+        outcome,
+      })
+    }
+
     if (decision === 'shore_support_requested') {
       get().createShoreCase({
         vesselId: 'own',
@@ -238,7 +311,7 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
       priority: input.priority,
       reason: input.reason,
       requestedExpertise: input.requestedExpertise,
-      status: 'open',
+      status: 'requested',
       createdAtIso: state.snapshot.simTimeIso,
       recommendationId: input.recommendationId,
     }
@@ -257,14 +330,16 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
         ...state.auditEvents,
       ],
     })
+    if (state.pocMode === 'connected') void connectedShoreCaseAdapter.sync(newCase)
   },
 
   updateShoreCase: (id, status, guidanceNotes) => {
     const state = get()
     const shoreCase = state.shoreCases.find((c) => c.id === id)
     if (!shoreCase) return
+    const updated = { ...shoreCase, status, guidanceNotes: guidanceNotes ?? shoreCase.guidanceNotes }
     set({
-      shoreCases: state.shoreCases.map((c) => (c.id === id ? { ...c, status, guidanceNotes: guidanceNotes ?? c.guidanceNotes } : c)),
+      shoreCases: state.shoreCases.map((c) => (c.id === id ? updated : c)),
       auditEvents: [
         {
           id: `AUD-CASE-${Date.now()}`,
@@ -278,6 +353,7 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
         ...state.auditEvents,
       ],
     })
+    if (state.pocMode === 'connected') void connectedShoreCaseAdapter.sync(updated)
   },
 
   logAudit: (event, kind = 'mode_change') => {

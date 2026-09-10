@@ -40,7 +40,7 @@ export function ArchitecturePage() {
           <div key={layer.title}>
             <button
               onClick={() => setOpen(open === layer.title ? null : layer.title)}
-              className={`w-full rounded-lg border p-4 text-left transition-colors ${open === layer.title ? 'border-info-500/50 bg-info-500/5' : 'border-panel-border bg-panel hover:border-hull-500/60'}`}
+              className={`w-full rounded-sm border p-4 text-left transition-colors ${open === layer.title ? 'border-info-500/50 bg-info-500/5' : 'border-panel-border bg-panel hover:border-hull-500/60'}`}
             >
               <div className="flex items-center justify-between">
                 <span className="text-sm font-semibold text-ink-100">{i + 1}. {layer.title}</span>

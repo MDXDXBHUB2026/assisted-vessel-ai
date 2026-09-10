@@ -21,7 +21,7 @@ export function NavigationPage() {
         <p className="text-sm text-ink-500">Own-ship position, route, and synthetic target tracking with CPA/TCPA evaluation.</p>
       </div>
 
-      <div className="rounded-md border border-info-500/30 bg-info-500/5 px-4 py-2.5 text-xs font-medium text-info-400">
+      <div className="rounded-sm border border-info-500/30 bg-info-500/5 px-4 py-2.5 text-xs font-medium text-info-400">
         Navigational authority remains with the bridge team. This system observes and advises only — it does not alter course or speed.
       </div>
 
@@ -81,7 +81,7 @@ export function NavigationPage() {
         <Panel title="Navigation Recommendations" subtitle="Evaluation only — bridge team decides">
           <ul className="flex flex-col gap-2">
             {recommendations.map((r) => (
-              <li key={r.id} className="flex items-start gap-3 rounded-md border border-panel-border bg-panel-raised px-3 py-2.5 text-xs">
+              <li key={r.id} className="flex items-start gap-3 rounded-sm border border-panel-border bg-panel-raised px-3 py-2.5 text-xs">
                 <ShieldAlert size={14} className="mt-0.5 shrink-0 text-warning-400" />
                 <div>
                   <div className="font-semibold text-ink-100">{r.title}</div>

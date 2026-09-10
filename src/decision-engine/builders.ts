@@ -1,41 +1,53 @@
-import type { EvidenceItem, RequiredAuthority, RiskLevel, VesselSnapshot, VesselSystemArea } from '@/types'
-import { analyseMainEngine } from './machineryAnalytics'
+import type { AnalyticalMethod, EvidenceItem, RequiredAuthority, RiskLevel, VesselSnapshot, VesselSystemArea } from '@/types'
+import type { MachineryAnalysis } from './machineryAnalytics'
 
 export interface RecommendationContent {
   vesselFunction: VesselSystemArea | 'voyage' | 'safety'
   title: string
   detectedCondition: string
-  sourceData: string[]
+  sourceSystems: string[]
+  evidence: EvidenceItem[]
+  dataQuality: 'high' | 'medium' | 'low' | 'unavailable'
+  analyticalMethod: AnalyticalMethod
+  modelId: string
+  modelVersion: string
   confidencePercent: number
   riskLevel: RiskLevel
   recommendedResponse: string
+  alternativeAction: string
+  fallbackOption: string
   expectedBenefit: string
+  potentialConsequence: string
   requiredAuthority: RequiredAuthority
-  evidence: EvidenceItem[]
-  modelId: string
   functionId: string
 }
 
-export function engineDegradationRecommendation(snapshot: VesselSnapshot, severity: number): RecommendationContent {
-  const analysis = analyseMainEngine(snapshot)
+export function engineDegradationRecommendation(snapshot: VesselSnapshot, analysis: MachineryAnalysis, severity: number): RecommendationContent {
   const riskLevel: RiskLevel = severity > 0.75 ? 'high' : severity > 0.4 ? 'medium' : 'low'
   return {
     vesselFunction: 'main_engine',
     title: 'Main Engine Thermal Anomaly — Technical Review Suggested',
     detectedCondition: analysis.probableCondition,
-    sourceData: ['Exhaust temperature array', 'Lubricating oil pressure sensor', 'Shaft power calculation', 'Running-hours log'],
+    sourceSystems: ['Exhaust temperature array', 'Lubricating oil pressure sensor', 'Shaft power calculation', 'Running-hours log'],
+    dataQuality: analysis.sampleCount >= 6 ? 'high' : 'medium',
+    analyticalMethod: 'ml_trend_detection',
     confidencePercent: analysis.confidencePercent,
     riskLevel,
     recommendedResponse: analysis.recommendedResponse,
+    alternativeAction: 'Reduce main engine load pending Chief Engineer assessment rather than continuing at current load.',
+    fallbackOption: 'If confidence in sensor data is in doubt, revert to manual engine-room rounds and log-book readings at increased frequency.',
     expectedBenefit: 'Early intervention reduces risk of unplanned derating and limits consequential damage.',
+    potentialConsequence: analysis.consequence,
     requiredAuthority: 'chief_engineer',
     evidence: [
-      { label: 'Exhaust temperature deviation', value: `${analysis.deviationC.toFixed(1)} °C above baseline`, sourceSystem: 'Engine Monitoring' },
-      { label: 'Anomaly score', value: `${analysis.anomalyScore} / 100`, sourceSystem: 'Machinery Intelligence' },
-      { label: 'Health score', value: `${analysis.healthScore} / 100`, sourceSystem: 'Machinery Intelligence' },
-      { label: 'Lubricating oil pressure', value: `${snapshot.mainEngine.lubOilPressureBar.toFixed(2)} bar`, sourceSystem: 'Engine Monitoring' },
+      { label: 'Exhaust temperature deviation', value: `${analysis.actualExhaustDeviationC.toFixed(1)} °C (baseline ${analysis.baselineExhaustDeviationC.toFixed(1)} °C)`, sourceSystem: 'Engine Monitoring', provenance: 'simulated' },
+      { label: 'Exhaust temperature trend', value: `${analysis.exhaustSlopePerSample >= 0 ? '+' : ''}${analysis.exhaustSlopePerSample.toFixed(2)} °C/sample`, sourceSystem: 'Machinery Intelligence', provenance: 'calculated' },
+      { label: 'Anomaly score', value: `${analysis.anomalyScore} / 100`, sourceSystem: 'Machinery Intelligence', provenance: 'calculated' },
+      { label: 'Health score', value: `${analysis.healthScore} / 100`, sourceSystem: 'Machinery Intelligence', provenance: 'calculated' },
+      { label: 'Lubricating oil pressure', value: `${snapshot.mainEngine.lubOilPressureBar.toFixed(2)} bar`, sourceSystem: 'Engine Monitoring', provenance: 'simulated' },
     ],
-    modelId: 'ME-Anomaly-Detector v2.3',
+    modelId: 'ME-Anomaly-Detector',
+    modelVersion: 'v2.3.1',
     functionId: 'machinery_anomaly_detection',
   }
 }
@@ -46,18 +58,24 @@ export function collisionRiskRecommendation(cpaNm: number, tcpaMinutes: number, 
     vesselFunction: 'navigation',
     title: `Closing Range Development — ${targetLabel}`,
     detectedCondition: `Projected CPA of ${cpaNm.toFixed(2)} nm in ${tcpaMinutes.toFixed(0)} minutes if courses and speeds are maintained.`,
-    sourceData: ['AIS target tracking', 'Radar tracking', 'Own-ship course and speed'],
+    sourceSystems: ['AIS target tracking', 'Radar tracking', 'Own-ship course and speed'],
+    dataQuality: 'high',
+    analyticalMethod: 'ml_trend_detection',
     confidencePercent: 88,
     riskLevel,
     recommendedResponse: 'Evaluate early course alteration, speed reduction, or enhanced monitoring in line with the COLREGs and bridge team judgement.',
+    alternativeAction: 'Maintain course and speed under enhanced visual and radar monitoring if bridge team assesses risk as acceptable.',
+    fallbackOption: 'If radar/AIS confidence degrades, revert to visual bearing-drift monitoring and sound signals per the COLREGs.',
     expectedBenefit: 'Earlier situational awareness supports timely bridge decision-making and increases available response time.',
+    potentialConsequence: 'Continued closure without action reduces available manoeuvring time and options for both vessels.',
     requiredAuthority: 'officer_of_the_watch',
     evidence: [
-      { label: 'CPA', value: `${cpaNm.toFixed(2)} nm`, sourceSystem: 'Navigation Assistance' },
-      { label: 'TCPA', value: `${tcpaMinutes.toFixed(0)} minutes`, sourceSystem: 'Navigation Assistance' },
-      { label: 'Target', value: targetLabel, sourceSystem: 'AIS / Radar Fusion' },
+      { label: 'CPA', value: `${cpaNm.toFixed(2)} nm`, sourceSystem: 'Navigation Assistance', provenance: 'calculated' },
+      { label: 'TCPA', value: `${tcpaMinutes.toFixed(0)} minutes`, sourceSystem: 'Navigation Assistance', provenance: 'calculated' },
+      { label: 'Target', value: targetLabel, sourceSystem: 'AIS / Radar Fusion', provenance: 'simulated' },
     ],
-    modelId: 'CPA-Risk-Model v1.4',
+    modelId: 'CPA-Risk-Model',
+    modelVersion: 'v1.4.0',
     functionId: 'nav_collision_advisory',
   }
 }
@@ -69,18 +87,24 @@ export function reeferExcursionRecommendation(containerRef: string, actualTempC:
     vesselFunction: 'cargo_reefer',
     title: `Reefer Temperature Excursion — ${containerRef}`,
     detectedCondition: `Actual temperature ${actualTempC.toFixed(1)}°C has drifted ${deviation.toFixed(1)}°C from set point ${setPointC.toFixed(1)}°C (${cargoCategory}).`,
-    sourceData: ['Reefer monitoring telemetry', 'Container power-status log'],
+    sourceSystems: ['Reefer monitoring telemetry', 'Container power-status log'],
+    dataQuality: 'high',
+    analyticalMethod: 'ml_anomaly_detection',
     confidencePercent: 91,
     riskLevel,
     recommendedResponse: 'Dispatch crew to inspect unit, verify power supply and setpoint, and assess cargo condition.',
+    alternativeAction: 'Move affected cargo priority for early discharge at next port if the unit cannot be stabilised underway.',
+    fallbackOption: 'If the unit cannot be restored, document condition and notify cargo interests via shore technical support.',
     expectedBenefit: 'Early detection reduces risk of cargo loss or claim exposure.',
+    potentialConsequence: 'Continued excursion risks spoilage of temperature-sensitive cargo and consequent claim exposure.',
     requiredAuthority: 'officer_of_the_watch',
     evidence: [
-      { label: 'Actual temperature', value: `${actualTempC.toFixed(1)} °C`, sourceSystem: 'Reefer Monitoring' },
-      { label: 'Set point', value: `${setPointC.toFixed(1)} °C`, sourceSystem: 'Reefer Monitoring' },
-      { label: 'Cargo category', value: cargoCategory, sourceSystem: 'Cargo Manifest (synthetic)' },
+      { label: 'Actual temperature', value: `${actualTempC.toFixed(1)} °C`, sourceSystem: 'Reefer Monitoring', provenance: 'simulated' },
+      { label: 'Set point', value: `${setPointC.toFixed(1)} °C`, sourceSystem: 'Reefer Monitoring', provenance: 'simulated' },
+      { label: 'Cargo category', value: cargoCategory, sourceSystem: 'Cargo Manifest (synthetic)', provenance: 'simulated' },
     ],
-    modelId: 'Reefer-Excursion-Rule v1.2',
+    modelId: 'Reefer-Excursion-Rule',
+    modelVersion: 'v1.2.0',
     functionId: 'reefer_monitoring',
   }
 }
@@ -93,18 +117,24 @@ export function fuelConsumptionRecommendation(snapshot: VesselSnapshot): Recomme
     vesselFunction: 'voyage',
     title: 'Fuel Consumption Trending Above Baseline',
     detectedCondition: `Fuel consumption is ${excessPercent.toFixed(0)}% above the baseline rate for the current speed and loading condition.`,
-    sourceData: ['Fuel flow meters', 'Shaft power calculation', 'Weather routing data'],
+    sourceSystems: ['Fuel flow meters', 'Shaft power calculation', 'Weather routing data'],
+    dataQuality: 'high',
+    analyticalMethod: 'optimisation',
     confidencePercent: 84,
     riskLevel,
     recommendedResponse: 'Evaluate speed adjustment against ETA window, and consider hull/propeller and weather-routing factors.',
+    alternativeAction: 'Maintain current speed if the arrival window has no tolerance for delay, accepting the fuel penalty.',
+    fallbackOption: 'If optimisation inputs (weather routing) are unavailable, fall back to standard passage planning speed tables.',
     expectedBenefit: 'Restoring baseline consumption reduces cost and emissions without materially affecting ETA if arrival window allows.',
+    potentialConsequence: 'Continued excess consumption increases voyage cost and emissions with no operational benefit.',
     requiredAuthority: 'master',
     evidence: [
-      { label: 'Current consumption', value: `${snapshot.fuelEnergy.fuelConsumptionRateTonPerDay.toFixed(1)} t/day`, sourceSystem: 'Energy Monitoring' },
-      { label: 'Baseline consumption', value: `${snapshot.fuelEnergy.baselineConsumptionRateTonPerDay.toFixed(1)} t/day`, sourceSystem: 'Energy Monitoring' },
-      { label: 'Excess', value: `${excessPercent.toFixed(0)}%`, sourceSystem: 'Voyage & Energy Intelligence' },
+      { label: 'Current consumption', value: `${snapshot.fuelEnergy.fuelConsumptionRateTonPerDay.toFixed(1)} t/day`, sourceSystem: 'Energy Monitoring', provenance: 'simulated' },
+      { label: 'Baseline consumption', value: `${snapshot.fuelEnergy.baselineConsumptionRateTonPerDay.toFixed(1)} t/day`, sourceSystem: 'Energy Monitoring', provenance: 'simulated' },
+      { label: 'Excess', value: `${excessPercent.toFixed(0)}%`, sourceSystem: 'Voyage & Energy Intelligence', provenance: 'calculated' },
     ],
-    modelId: 'Voyage-Optimiser v3.0',
+    modelId: 'Voyage-Optimiser',
+    modelVersion: 'v3.0.2',
     functionId: 'voyage_speed_optimisation',
   }
 }
@@ -114,14 +144,20 @@ export function gnssDegradationRecommendation(gnssConfidence: number): Recommend
     vesselFunction: 'navigation',
     title: 'GNSS / Sensor Confidence Degraded',
     detectedCondition: `Position confidence has fallen to ${gnssConfidence.toFixed(0)}%, below the threshold for full navigation assistance.`,
-    sourceData: ['GNSS receiver diagnostics', 'Sensor confidence fusion'],
+    sourceSystems: ['GNSS receiver diagnostics', 'Sensor confidence fusion'],
+    dataQuality: 'low',
+    analyticalMethod: 'deterministic_rule',
     confidencePercent: 95,
     riskLevel: gnssConfidence < 40 ? 'high' : 'medium',
     recommendedResponse: 'Cross-check position by radar/visual fixing; navigation assistance functions restricted until confidence recovers.',
+    alternativeAction: 'Continue on dead-reckoning with increased fixing frequency if radar/visual fixing is unavailable.',
+    fallbackOption: 'Revert to conventional (L0) navigation practice until GNSS confidence is restored.',
     expectedBenefit: 'Prevents reliance on degraded position data for assistance recommendations.',
+    potentialConsequence: 'Continued reliance on degraded GNSS data risks a compounding navigational error.',
     requiredAuthority: 'officer_of_the_watch',
-    evidence: [{ label: 'GNSS confidence', value: `${gnssConfidence.toFixed(0)}%`, sourceSystem: 'Navigation Sensors' }],
-    modelId: 'Sensor-Confidence-Fusion v1.0',
+    evidence: [{ label: 'GNSS confidence', value: `${gnssConfidence.toFixed(0)}%`, sourceSystem: 'Navigation Sensors', provenance: 'simulated' }],
+    modelId: 'Sensor-Confidence-Fusion',
+    modelVersion: 'v1.0.4',
     functionId: 'nav_collision_advisory',
   }
 }
@@ -131,14 +167,20 @@ export function safetyEventRecommendation(hazardTitle: string): RecommendationCo
     vesselFunction: 'safety',
     title: `Safety Hazard Raised — ${hazardTitle}`,
     detectedCondition: `A safety hazard condition has been detected and requires crew acknowledgement and response.`,
-    sourceData: ['Safety systems monitoring', 'Alarm correlation engine'],
+    sourceSystems: ['Safety systems monitoring', 'Alarm correlation engine'],
+    dataQuality: 'high',
+    analyticalMethod: 'deterministic_rule',
     confidencePercent: 93,
     riskLevel: 'high',
     recommendedResponse: 'Acknowledge, assign a responsible role, and follow the vessel safety management system procedure.',
+    alternativeAction: 'Muster additional crew if initial response indicates the condition is worsening.',
+    fallbackOption: 'Escalate to shore safety support immediately if onboard resources cannot contain the condition.',
     expectedBenefit: 'Structured response reduces risk to personnel and vessel.',
+    potentialConsequence: 'Delayed response could allow a contained condition to escalate.',
     requiredAuthority: 'master',
-    evidence: [{ label: 'Hazard', value: hazardTitle, sourceSystem: 'Safety Intelligence' }],
-    modelId: 'Safety-Event-Rule v1.0',
+    evidence: [{ label: 'Hazard', value: hazardTitle, sourceSystem: 'Safety Intelligence', provenance: 'rule_validated' }],
+    modelId: 'Safety-Event-Rule',
+    modelVersion: 'v1.0.0',
     functionId: 'machinery_anomaly_detection',
   }
 }

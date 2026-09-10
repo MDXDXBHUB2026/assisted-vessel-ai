@@ -21,7 +21,16 @@ export interface FleetVesselSummary {
   communicationsOk: boolean
 }
 
-export type ShoreCaseStatus = 'open' | 'accepted' | 'in_review' | 'guidance_provided' | 'returned' | 'closed'
+export type ShoreCaseStatus = 'requested' | 'accepted' | 'under_review' | 'guidance_provided' | 'returned_to_vessel' | 'closed'
+
+export const SHORE_CASE_STATUS_LABELS: Record<ShoreCaseStatus, string> = {
+  requested: 'REQUESTED',
+  accepted: 'ACCEPTED',
+  under_review: 'UNDER REVIEW',
+  guidance_provided: 'GUIDANCE PROVIDED',
+  returned_to_vessel: 'RETURNED TO VESSEL',
+  closed: 'CLOSED',
+}
 
 export interface ShoreCase {
   id: string

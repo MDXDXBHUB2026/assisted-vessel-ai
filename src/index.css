@@ -4,29 +4,30 @@
   --font-sans: 'Inter', 'Segoe UI', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', 'Consolas', monospace;
 
-  --color-hull-950: #05070d;
-  --color-hull-900: #0a0f1a;
-  --color-hull-850: #0d1420;
-  --color-hull-800: #111a29;
-  --color-hull-750: #182233;
-  --color-hull-700: #1a2536;
-  --color-hull-600: #24324a;
-  --color-hull-500: #34455f;
-  --color-hull-400: #536481;
+  /* Premium corporate maritime palette — Abyssal Navy canvas, Steel Midnight surfaces, Ice Cyan accents. */
+  --color-hull-950: #0b132b;
+  --color-hull-900: #0e1830;
+  --color-hull-850: #121d3a;
+  --color-hull-800: #16213e;
+  --color-hull-750: #1a2748;
+  --color-hull-700: #1e2e52;
+  --color-hull-600: #24365f;
+  --color-hull-500: #3a4d74;
+  --color-hull-400: #5c7096;
 
-  --color-panel: #0e1521;
-  --color-panel-raised: #131c2b;
-  --color-panel-border: #23324a;
+  --color-panel: #1c2541;
+  --color-panel-raised: #232d52;
+  --color-panel-border: #29365a;
 
-  --color-ink-000: #f4f6f9;
-  --color-ink-100: #e3e8f0;
-  --color-ink-300: #b7c2d3;
-  --color-ink-500: #8695ac;
-  --color-ink-700: #5c6b83;
+  --color-ink-000: #f1f5f9;
+  --color-ink-100: #e2e8f0;
+  --color-ink-300: #cbd5e1;
+  --color-ink-500: #94a3b8;
+  --color-ink-700: #475569;
 
-  --color-info-400: #35d0d6;
-  --color-info-500: #22b8c4;
-  --color-info-600: #1b93a0;
+  --color-info-400: #5bc0be;
+  --color-info-500: #4aa9a7;
+  --color-info-600: #3b8988;
 
   --color-healthy-400: #3ee08a;
   --color-healthy-500: #22c26c;

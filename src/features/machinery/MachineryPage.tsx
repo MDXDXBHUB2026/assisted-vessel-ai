@@ -1,24 +1,21 @@
 import { useState } from 'react'
 import { useSimulationStore } from '@/store/simulationStore'
 import { Panel } from '@/components/ui/Panel'
-import { StatTile } from '@/components/ui/StatTile'
 import { Button } from '@/components/ui/Button'
 import { Sparkline } from '@/components/charts/Sparkline'
 import { Modal } from '@/components/ui/Modal'
-import { useMetricHistory } from '@/hooks/useMetricHistory'
-import { analyseMainEngine } from '@/decision-engine/machineryAnalytics'
+import { InstrumentRow } from '@/components/ui/InstrumentRow'
+import { ProvenanceTag } from '@/components/ui/Badge'
 import { Gauge } from 'lucide-react'
 
 export function MachineryPage() {
   const snapshot = useSimulationStore((s) => s.snapshot)
+  const analysis = useSimulationStore((s) => s.machineryAnalysis)
+  const exhaustHistory = useSimulationStore((s) => s.telemetryHistory.exhaustTempDeviationC.values)
+  const oilHistory = useSimulationStore((s) => s.telemetryHistory.lubOilPressureBar.values)
   const decideRecommendation = useSimulationStore((s) => s.decideRecommendation)
   const recommendations = useSimulationStore((s) => s.recommendations).filter((r) => r.vesselFunction === 'main_engine')
   const [showEvidence, setShowEvidence] = useState(false)
-
-  const analysis = analyseMainEngine(snapshot)
-  const exhaustHistory = useMetricHistory((s) => s.snapshot.mainEngine.exhaustTempAvgC, 50)
-  const oilHistory = useMetricHistory((s) => s.snapshot.mainEngine.lubOilPressureBar, 50)
-  const anomalyHistory = useMetricHistory(() => analyseMainEngine(snapshot).anomalyScore, 50)
 
   const tone = analysis.anomalyScore > 65 ? 'critical' : analysis.anomalyScore > 35 ? 'warning' : 'healthy'
   const active = recommendations[0]
@@ -29,25 +26,30 @@ export function MachineryPage() {
         <h1 className="flex items-center gap-2 text-lg font-semibold text-ink-000">
           <Gauge size={18} className="text-info-400" /> Machinery Intelligence
         </h1>
-        <p className="text-sm text-ink-500">Condition monitoring and anomaly detection for main engine and auxiliary machinery.</p>
+        <p className="text-sm text-ink-500">Time-series condition monitoring: instantaneous deviation, rolling trend and persistence are combined into a single anomaly score — not a single-point threshold.</p>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatTile label="Health Score" value={String(analysis.healthScore)} unit="/100" tone={tone} />
-        <StatTile label="Anomaly Score" value={String(analysis.anomalyScore)} unit="/100" tone={tone} />
-        <StatTile label="Exhaust Temp" value={snapshot.mainEngine.exhaustTempAvgC.toFixed(0)} unit="°C" />
-        <StatTile label="Lub Oil Pressure" value={snapshot.mainEngine.lubOilPressureBar.toFixed(2)} unit="bar" />
+      <div className="grid grid-cols-2 gap-x-6 gap-y-1 rounded-sm border border-panel-border bg-panel px-4 py-3 sm:grid-cols-4">
+        <InstrumentRow label="Health Score" value={String(analysis.healthScore)} unit="/100" tone={tone} />
+        <InstrumentRow label="Anomaly Score" value={String(analysis.anomalyScore)} unit="/100" tone={tone} />
+        <InstrumentRow label="Exhaust Deviation" value={analysis.actualExhaustDeviationC.toFixed(1)} unit="°C" />
+        <InstrumentRow label="Lub Oil Pressure" value={analysis.actualLubOilPressureBar.toFixed(2)} unit="bar" />
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <Panel title="Exhaust Temperature Trend" dense>
+        <Panel title="Exhaust Temperature Deviation Trend" dense>
           <Sparkline data={exhaustHistory} color="#f0473a" height={90} />
+          <p className="mt-1 text-[11px] text-ink-500">Slope: {analysis.exhaustSlopePerSample >= 0 ? '+' : ''}{analysis.exhaustSlopePerSample.toFixed(2)} °C/sample · Persistence: {(analysis.exhaustPersistence * 100).toFixed(0)}%</p>
         </Panel>
         <Panel title="Lubricating Oil Pressure Trend" dense>
-          <Sparkline data={oilHistory} color="#22b8c4" height={90} />
+          <Sparkline data={oilHistory} color="#5BC0BE" height={90} />
+          <p className="mt-1 text-[11px] text-ink-500">Slope: {analysis.lubOilSlopePerSample >= 0 ? '+' : ''}{analysis.lubOilSlopePerSample.toFixed(3)} bar/sample · Persistence: {(analysis.lubOilPersistence * 100).toFixed(0)}%</p>
         </Panel>
-        <Panel title="Anomaly Score Trend" dense>
-          <Sparkline data={anomalyHistory} color="#eda528" height={90} />
+        <Panel title="Sample Maturity" dense>
+          <div className="flex h-[90px] flex-col items-center justify-center text-center">
+            <span className="text-2xl font-bold text-ink-000 tabular-nums">{analysis.sampleCount}</span>
+            <span className="text-[11px] text-ink-500">rolling samples informing this analysis</span>
+          </div>
         </Panel>
       </div>
 
@@ -56,15 +58,17 @@ export function MachineryPage() {
           <div className="flex flex-col gap-2 text-sm">
             <Row label="Probable condition" value={analysis.probableCondition} />
             <Row label="Confidence" value={`${analysis.confidencePercent}%`} />
-            <Row label="Baseline exhaust deviation" value="3.0 °C" />
-            <Row label="Current deviation" value={`${analysis.deviationC.toFixed(1)} °C`} />
-            <Row label="Consequence if deferred" value={analysis.consequence} />
+            <Row label="Baseline exhaust deviation" value={`${analysis.baselineExhaustDeviationC.toFixed(1)} °C`} />
+            <Row label="Baseline lub oil pressure" value={`${analysis.baselineLubOilPressureBar.toFixed(2)} bar`} />
+            <Row label="Operational consequence if deferred" value={analysis.consequence} />
+            <Row label="Maintenance consequence" value={analysis.maintenanceConsequence} />
             <Row label="Recommended response" value={analysis.recommendedResponse} />
           </div>
           <div className="flex flex-col justify-between gap-3">
-            <div className="rounded-md border border-panel-border bg-panel-raised p-3 text-xs text-ink-400">
-              Deterministic condition-monitoring logic compares live sensor values against baseline operating parameters for this unit and running-hours profile.
-              This does not constitute engineering advice — treat as a decision-support indication only.
+            <div className="rounded-sm border border-panel-border bg-panel-raised p-3 text-xs text-ink-400">
+              ML — Condition Trend Detection. Deviation, slope and persistence are computed from the live rolling telemetry window against fixed baseline
+              operating parameters. This does not constitute engineering advice — treat as a decision-support indication only, subject to Chief Engineer
+              review.
             </div>
             <div className="flex flex-wrap gap-2">
               <Button size="sm" onClick={() => setShowEvidence(true)}>VIEW EVIDENCE</Button>
@@ -91,11 +95,26 @@ export function MachineryPage() {
       {showEvidence && (
         <Modal title="Machinery Evidence" onClose={() => setShowEvidence(false)}>
           <ul className="flex flex-col gap-2 text-xs">
-            <li>Exhaust temperature array — {snapshot.mainEngine.exhaustTempAvgC.toFixed(1)} °C average across monitored units.</li>
-            <li>Lubricating oil pressure sensor — {snapshot.mainEngine.lubOilPressureBar.toFixed(2)} bar (baseline 4.20 bar).</li>
-            <li>Shaft power calculation — {snapshot.mainEngine.shaftPowerKw.toFixed(0)} kW at {snapshot.mainEngine.rpm.toFixed(0)} RPM.</li>
-            <li>Running hours — {snapshot.mainEngine.runningHours.toFixed(0)} hours since commissioning.</li>
-            <li>Anomaly score {analysis.anomalyScore}/100 derived from thermal and lubrication deviation model.</li>
+            <li className="flex items-center justify-between gap-2">
+              <span>Exhaust temperature array — {snapshot.mainEngine.exhaustTempAvgC.toFixed(1)} °C average across monitored units.</span>
+              <ProvenanceTag provenance="simulated" />
+            </li>
+            <li className="flex items-center justify-between gap-2">
+              <span>Lubricating oil pressure sensor — {snapshot.mainEngine.lubOilPressureBar.toFixed(2)} bar (baseline {analysis.baselineLubOilPressureBar.toFixed(2)} bar).</span>
+              <ProvenanceTag provenance="simulated" />
+            </li>
+            <li className="flex items-center justify-between gap-2">
+              <span>Shaft power calculation — {snapshot.mainEngine.shaftPowerKw.toFixed(0)} kW at {snapshot.mainEngine.rpm.toFixed(0)} RPM.</span>
+              <ProvenanceTag provenance="calculated" />
+            </li>
+            <li className="flex items-center justify-between gap-2">
+              <span>Running hours — {snapshot.mainEngine.runningHours.toFixed(0)} hours since commissioning.</span>
+              <ProvenanceTag provenance="simulated" />
+            </li>
+            <li className="flex items-center justify-between gap-2">
+              <span>Anomaly score {analysis.anomalyScore}/100 derived from deviation + trend + persistence model ({analysis.sampleCount} samples).</span>
+              <ProvenanceTag provenance="calculated" />
+            </li>
           </ul>
         </Modal>
       )}

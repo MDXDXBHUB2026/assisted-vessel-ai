@@ -2,7 +2,7 @@ import { HashRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { useSimulationLoop } from '@/hooks/useSimulationLoop'
 import { AppShell } from '@/layouts/AppShell'
 import { LandingPage } from '@/features/landing/LandingPage'
-import { ConsolePage } from '@/features/vessel/ConsolePage'
+import { OperationsCanvasPage } from '@/features/operations/OperationsCanvasPage'
 import { DigitalTwinPage } from '@/features/vessel/DigitalTwinPage'
 import { NavigationPage } from '@/features/navigation/NavigationPage'
 import { MachineryPage } from '@/features/machinery/MachineryPage'
@@ -19,6 +19,10 @@ import { AuditPage } from '@/features/audit/AuditPage'
 import { ShoreCentrePage } from '@/features/shore/ShoreCentrePage'
 import { ArchitecturePage } from '@/features/architecture/ArchitecturePage'
 import { ConOpsPage } from '@/features/conops/ConOpsPage'
+import { SystemAssurancePage } from '@/features/assurance/SystemAssurancePage'
+import { EngineeringAssurancePage } from '@/features/assurance/EngineeringAssurancePage'
+import { RequirementsVerificationPage } from '@/features/assurance/RequirementsVerificationPage'
+import { OperationalValuePage } from '@/features/value/OperationalValuePage'
 
 export function App() {
   useSimulationLoop()
@@ -30,7 +34,7 @@ export function App() {
 
         <Route element={<AppShell section="vessel" />}>
           <Route path="/vessel" element={<Navigate to="/vessel/console" replace />} />
-          <Route path="/vessel/console" element={<ConsolePage />} />
+          <Route path="/vessel/console" element={<OperationsCanvasPage />} />
           <Route path="/vessel/digital-twin" element={<DigitalTwinPage />} />
           <Route path="/vessel/navigation" element={<NavigationPage />} />
           <Route path="/vessel/machinery" element={<MachineryPage />} />
@@ -46,6 +50,10 @@ export function App() {
           <Route path="/vessel/scenarios" element={<ScenarioControlPage />} />
           <Route path="/architecture" element={<ArchitecturePage />} />
           <Route path="/conops" element={<ConOpsPage />} />
+          <Route path="/assurance/system" element={<SystemAssurancePage />} />
+          <Route path="/assurance/programme" element={<EngineeringAssurancePage />} />
+          <Route path="/assurance/requirements" element={<RequirementsVerificationPage />} />
+          <Route path="/value" element={<OperationalValuePage />} />
         </Route>
 
         <Route element={<AppShell section="shore" />}>

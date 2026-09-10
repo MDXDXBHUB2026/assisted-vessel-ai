@@ -1,6 +1,6 @@
 import { Area, AreaChart, ResponsiveContainer, YAxis } from 'recharts'
 
-export function Sparkline({ data, color = '#22b8c4', height = 40 }: { data: number[]; color?: string; height?: number }) {
+export function Sparkline({ data, color = '#5BC0BE', height = 40 }: { data: number[]; color?: string; height?: number }) {
   const points = data.map((v, i) => ({ i, v }))
   return (
     <div style={{ height }}>

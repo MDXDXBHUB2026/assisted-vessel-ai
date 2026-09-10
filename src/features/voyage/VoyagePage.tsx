@@ -60,15 +60,15 @@ export function VoyagePage() {
               />
             </div>
             <div className="grid grid-cols-3 gap-2 text-center text-xs">
-              <div className="rounded-md border border-panel-border bg-panel-raised py-2">
+              <div className="rounded-sm border border-panel-border bg-panel-raised py-2">
                 <div className="text-ink-500">Current</div>
                 <div className="mt-1 font-semibold text-ink-100">{voyagePlan.fuelEstimateCurrentTons.toFixed(0)} t</div>
               </div>
-              <div className="rounded-md border border-panel-border bg-panel-raised py-2">
+              <div className="rounded-sm border border-panel-border bg-panel-raised py-2">
                 <div className="text-ink-500">Recommended</div>
                 <div className="mt-1 font-semibold text-info-400">{voyagePlan.fuelEstimateRecommendedTons.toFixed(0)} t</div>
               </div>
-              <div className="rounded-md border border-panel-border bg-panel-raised py-2">
+              <div className="rounded-sm border border-panel-border bg-panel-raised py-2">
                 <div className="text-ink-500">Saving</div>
                 <div className={`mt-1 font-semibold ${voyagePlan.fuelSavingTons >= 0 ? 'text-healthy-400' : 'text-warning-400'}`}>{voyagePlan.fuelSavingTons.toFixed(0)} t</div>
               </div>

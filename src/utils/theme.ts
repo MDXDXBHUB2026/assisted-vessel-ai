@@ -1,4 +1,4 @@
-import type { HealthLevel, RiskLevel, SafetyVerdict, SystemState } from '@/types'
+import type { AssuranceAvailability, HealthLevel, OddStatus, RiskLevel, SafetyVerdict, SystemState } from '@/types'
 
 export const healthColor: Record<HealthLevel, { text: string; bg: string; border: string; dot: string }> = {
   healthy: { text: 'text-healthy-400', bg: 'bg-healthy-500/10', border: 'border-healthy-500/30', dot: 'bg-healthy-500' },
@@ -32,4 +32,16 @@ export const systemStateColor: Record<SystemState, string> = {
   degraded: 'text-warning-400',
   fallback: 'text-warning-400',
   contingency: 'text-critical-400',
+}
+
+export const oddStatusColor: Record<OddStatus, { text: string; bg: string; border: string }> = {
+  inside: { text: 'text-healthy-400', bg: 'bg-healthy-500/10', border: 'border-healthy-500/30' },
+  near_limit: { text: 'text-warning-400', bg: 'bg-warning-500/10', border: 'border-warning-500/30' },
+  outside: { text: 'text-critical-400', bg: 'bg-critical-500/10', border: 'border-critical-500/30' },
+}
+
+export const assuranceColor: Record<AssuranceAvailability, string> = {
+  available: 'text-healthy-400',
+  degraded: 'text-warning-400',
+  unavailable: 'text-critical-400',
 }
