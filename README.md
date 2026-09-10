@@ -15,7 +15,7 @@ SENSE → UNDERSTAND → PREDICT → RECOMMEND → SAFETY VALIDATE → EXPLAIN
       → HUMAN DECISION → CONTROLLED ACTION → MONITOR OUTCOME → AUDIT
 ```
 
-It includes an onboard Assisted Vessel console (digital twin, navigation, machinery, maintenance, voyage/energy, cargo/reefer, safety, alarms, operational envelope, human decision centre, audit trail, operations copilot), a Shore Assisted Operations Centre, a scenario-driven simulation engine, and a full engineering documentation set under [`docs/`](docs/).
+It includes a Bridge Operations mission-control canvas, a Chief-Engineer-style Engineering Operations workspace with streaming telemetry, an interactive vessel-system Digital Twin, a canvas-rendered real-time Navigation Operating Picture, a Shore Assisted Operations Centre, an L0–L4 assistance-level framework, a deterministic Safety/ODD engine, a Connected-POC service-adapter boundary, a ten-phase Demo Voyage sequencer, and a full engineering documentation set under [`docs/`](docs/).
 
 ## Quick start
 
@@ -24,7 +24,7 @@ npm install
 npm run dev
 ```
 
-Then open the printed local URL and click **ENTER ASSISTED VESSEL**.
+Then open the printed local URL and click **ENTER BRIDGE OPERATIONS**, or **START DEMO VOYAGE** for a guided end-to-end walkthrough.
 
 ## Scripts
 
@@ -34,6 +34,7 @@ Then open the printed local URL and click **ENTER ASSISTED VESSEL**.
 | `npm run build` | Type-check and build the static production site into `dist/` |
 | `npm run preview` | Preview the production build locally |
 | `npm run test` | Run the unit test suite (Vitest) |
+| `npm run test:e2e` | Run the Playwright end-to-end acceptance-journey suite (builds/serves first via `npm run preview`) |
 | `npm run lint` | Run oxlint |
 
 ## Documentation

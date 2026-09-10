@@ -46,6 +46,7 @@ export function buildBaselineSnapshot(): VesselSnapshot {
       shaftPowerKw: 21400,
       exhaustTempAvgC: 372,
       exhaustTempDeviationC: 3,
+      cylinderExhaustDeviationsC: [3, 2.8, 3.1, 2.9, 3.2, 3],
       lubOilPressureBar: 4.2,
       coolingWaterTempC: 74,
       fuelRackPosition: 68,

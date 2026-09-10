@@ -35,3 +35,13 @@ This document records the assumptions underpinning the Assisted Vessel Intellige
 
 15. No real vessel, sensor, or shore system is connected. All "conceptual interfaces" described in the architecture are illustrative integration points for a possible future real implementation.
 16. Cybersecurity requirements describe the conceptual posture a real system would need; the demonstrator itself has no attack surface beyond a static web page.
+17. Connected POC mode is a real, working boundary (it attempts genuine HTTP calls) but there is no backend deployed for the public demonstration — every connected adapter will always report a fallback status, by design, and this is shown honestly rather than simulated as a success.
+
+## Deliberate technology substitutions
+
+A small number of explicitly named technologies were substituted for lighter alternatives, each chosen to keep the demonstrator dependency-lean, fully static, and honest about what it is showing:
+
+18. **No MapLibre GL / deck.gl.** The vessel's geography is entirely synthetic (fictional route, fictional targets); a real-world WebGL basemap would need live map-tile infrastructure and would misleadingly suggest the vessel is operating in a real, identifiable location. Instead, `NavigationCanvas` is a bespoke Canvas2D renderer with its own requestAnimationFrame interpolation loop, historical/predicted tracks, CPA/TCPA geometry, layer toggles and view modes (North Up / Course Up / Vessel Centred) — the same functional requirements, without a basemap dependency or an implied real position.
+19. **No React Three Fiber / Three.js 3D Digital Twin.** The Digital Twin is a 2D functional-system topology (`VesselTopology`) showing the eight monitored system areas and their power/monitoring relationships, with click-through condition/trend/evidence detail. A full 3D vessel model was judged to add rendering-pipeline risk and build time disproportionate to its incremental value over a clear, fast, accessible 2D topology for this POC.
+20. **Apache ECharts** is used for genuine streaming engineering telemetry (`StreamingChart`) where the brief specifically asked for it; the existing lightweight Recharts-based `Sparkline` is retained for a few small in-context trend indicators. Standardising on a single charting library is a reasonable follow-up cleanup, noted as a remaining item.
+21. Machinery and voyage models remain the illustrative approximations described in item 5 above — ECharts and the new multivariate (cylinder-spread) signal change how the analytics are *computed and displayed* (rolling history, slope, persistence, spread), not the fact that they are synthetic, uncalibrated models.

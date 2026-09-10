@@ -146,6 +146,24 @@ describe('SAFETY EVENT scenario', () => {
   })
 })
 
+describe('DEMO VOYAGE phase sequencing', () => {
+  it('auto-advances from phase 1 to phase 2 once the phase duration elapses, and generates fewer than that on its own', () => {
+    let state: SimulationState = {
+      ...buildInitialSimulationState(),
+      activeScenario: 'normal_operations',
+      demoVoyage: { active: true, phaseIndex: 0, phaseElapsedMinutes: 0 },
+    }
+    // Phase 1 (Normal Open-Sea Operations) runs for 20 minutes in DEMO_VOYAGE_PHASES.
+    for (let i = 0; i < 19; i++) state = tick(state, 1)
+    expect(state.demoVoyage.phaseIndex).toBe(0)
+
+    for (let i = 0; i < 5; i++) state = tick(state, 1)
+    expect(state.demoVoyage.phaseIndex).toBe(1)
+    expect(state.activeScenario).toBe('excessive_fuel_consumption')
+    expect(state.auditEvents.some((e) => e.event.includes('Demo Voyage phase advanced'))).toBe(true)
+  })
+})
+
 describe('RESET / re-activation', () => {
   it('allows a scenario to be re-triggered after returning to normal operations', () => {
     let state = runScenario('engine_degradation', 260)

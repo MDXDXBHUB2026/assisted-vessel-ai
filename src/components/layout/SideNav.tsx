@@ -31,7 +31,8 @@ interface NavItem {
 }
 
 const VESSEL_ITEMS: NavItem[] = [
-  { to: '/vessel/console', label: 'Operations Canvas', icon: <LayoutGrid size={16} /> },
+  { to: '/vessel/console', label: 'Bridge Operations', icon: <LayoutGrid size={16} /> },
+  { to: '/engineering', label: 'Engineering Operations', icon: <Wrench size={16} /> },
   { to: '/vessel/digital-twin', label: 'Digital Twin', icon: <Boxes size={16} /> },
   { to: '/vessel/navigation', label: 'Navigation', icon: <Compass size={16} /> },
   { to: '/vessel/machinery', label: 'Machinery', icon: <Gauge size={16} /> },

@@ -1,8 +1,8 @@
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useSimulationStore } from '@/store/simulationStore'
 import { VesselTopology, type TopologyLink, type TopologyNode } from '@/components/charts/VesselTopology'
 import { SYSTEM_AREA_LABELS, OPERATIONAL_MODE_LABELS, type VesselSystemArea } from '@/types'
-import { Anchor, Building2, Compass, Fuel, Gauge, Radio, ShieldAlert, Snowflake, Wrench, Zap, ArrowRight, Network } from 'lucide-react'
+import { Anchor, Building2, Compass, Fuel, Gauge, Radio, ShieldAlert, Snowflake, Wrench, Zap, ArrowRight, Network, PlayCircle } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 
 const AREA_ICONS: Record<VesselSystemArea, ReactNode> = {
@@ -39,14 +39,17 @@ const LINKS: TopologyLink[] = [
 ]
 
 const ENTRY_POINTS = [
-  { to: '/vessel/console', label: 'ONBOARD ASSISTED OPERATIONS', icon: <Anchor size={20} />, body: 'The assisted operations console: navigation, machinery, safety, alarms, envelope and human decision centre.' },
-  { to: '/shore', label: 'SHORE ASSISTED OPERATIONS', icon: <Building2 size={20} />, body: 'Fleet operating picture, specialist case workflow, and shore-support decision-making.' },
-  { to: '/assurance/programme', label: 'ENGINEERING / ASSURANCE', icon: <Network size={20} />, body: 'Requirements, architecture, ODD, hazard analysis, V&V and the full traceability record.' },
+  { to: '/vessel/console', label: 'ENTER BRIDGE OPERATIONS', icon: <Anchor size={20} />, body: 'Navigation operating picture, safety, alarms, envelope and human decision centre.' },
+  { to: '/engineering', label: 'ENTER ENGINEERING OPERATIONS', icon: <Wrench size={20} />, body: 'Chief Engineer workspace: machinery, condition intelligence, alarms and maintenance planning.' },
+  { to: '/shore', label: 'ENTER SHORE OPERATIONS', icon: <Building2 size={20} />, body: 'Fleet operating picture, specialist case workflow, and shore-support decision-making.' },
+  { to: '/assurance/programme', label: 'EXPLORE ENGINEERING ASSURANCE', icon: <Network size={20} />, body: 'Requirements, architecture, ODD, hazard analysis, V&V and the full traceability record.' },
 ]
 
 export function LandingPage() {
   const snapshot = useSimulationStore((s) => s.snapshot)
+  const startDemoVoyage = useSimulationStore((s) => s.startDemoVoyage)
   const [selected, setSelected] = useState<VesselSystemArea | null>(null)
+  const navigate = useNavigate()
 
   const nodes: TopologyNode[] = snapshot.systemHealth.map((s) => ({
     area: s.area,
@@ -89,6 +92,20 @@ export function LandingPage() {
                 <ArrowRight size={14} className="shrink-0 text-ink-700 transition-transform group-hover:translate-x-0.5 group-hover:text-info-400" />
               </Link>
             ))}
+            <button
+              onClick={() => {
+                startDemoVoyage()
+                navigate('/vessel/scenarios')
+              }}
+              className="group flex items-center gap-3 rounded-sm border border-orange-600/40 bg-orange-600/10 px-4 py-3 text-left transition-colors hover:border-orange-500/60 hover:bg-orange-600/15"
+            >
+              <span className="text-orange-500"><PlayCircle size={20} /></span>
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-bold tracking-wide text-ink-000">START DEMO VOYAGE</div>
+                <div className="text-[11px] text-ink-500">A coherent, compressed ten-phase demonstration — normal operations through machinery degradation, collision risk, heavy weather, comms loss and recovery.</div>
+              </div>
+              <ArrowRight size={14} className="shrink-0 text-ink-700 transition-transform group-hover:translate-x-0.5 group-hover:text-orange-400" />
+            </button>
           </div>
 
           <div className="mt-6 flex flex-wrap gap-x-4 gap-y-1 text-[10px] font-medium uppercase tracking-wide text-ink-700">

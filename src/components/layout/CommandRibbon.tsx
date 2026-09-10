@@ -48,6 +48,8 @@ export function CommandRibbon() {
   const anyFallback = pocMode === 'connected' && Object.values(adapterStatuses).some((s) => s === 'unavailable_fallback' || s === 'connecting')
   const dataModeLabel = 'SIMULATED'
   const dataModeSub = pocMode === 'offline' ? 'Offline Demonstration Mode' : anyFallback ? 'Connected services unavailable — fallback active' : 'Connected services active'
+  const activeScenario = useSimulationStore((s) => s.activeScenario)
+  const demoVoyage = useSimulationStore((s) => s.demoVoyage)
 
   return (
     <header className="flex shrink-0 flex-col border-b border-panel-border bg-hull-900">
@@ -73,15 +75,18 @@ export function CommandRibbon() {
       </div>
 
       <div className="flex flex-wrap items-center gap-x-1 gap-y-1 overflow-x-auto px-4 py-1.5">
+        <RibbonStat label="Vessel" value={snapshot.identity.name} />
         <RibbonStat label="Operating Mode" value={OPERATIONAL_MODE_LABELS[snapshot.operationalMode]} />
         <RibbonStat label="System State" value={snapshot.overallHealth.toUpperCase()} valueClass={HEALTH_COLOR[snapshot.overallHealth]} />
         <RibbonStat label="Operational Envelope" value={worstOdd === 'inside' ? 'INSIDE ODD' : worstOdd === 'near_limit' ? 'NEAR LIMIT' : 'OUTSIDE ODD'} valueClass={ODD_COLOR[worstOdd]} />
-        <RibbonStat label="Connectivity" value={snapshot.communications.satelliteLinkUp ? 'LINKED' : 'FALLBACK'} valueClass={snapshot.communications.satelliteLinkUp ? 'text-healthy-400' : 'text-critical-400'} />
         <RibbonStat label="Assistance Level" value={minAvailableLevel} sub={worstHealth([snapshot.overallHealth]) !== 'healthy' ? 'capped' : undefined} valueClass="text-info-400" />
+        <RibbonStat label="Connectivity" value={snapshot.communications.satelliteLinkUp ? 'LINKED' : 'FALLBACK'} valueClass={snapshot.communications.satelliteLinkUp ? 'text-healthy-400' : 'text-critical-400'} />
         <RibbonStat label="Data Quality" value={dataQualityLabel} valueClass={dataQualityLabel === 'HIGH' ? 'text-healthy-400' : dataQualityLabel === 'MEDIUM' ? 'text-warning-400' : 'text-critical-400'} />
         <RibbonStat label="Active Alerts" value={String(activeAlerts)} valueClass={activeAlerts > 0 ? 'text-warning-400' : 'text-healthy-400'} />
         <RibbonStat label="Pending Decisions" value={String(pendingDecisions)} valueClass={pendingDecisions > 0 ? 'text-warning-400' : 'text-healthy-400'} />
-        <RibbonStat label="POC Data Mode" value={dataModeLabel} sub={dataModeSub} valueClass="text-critical-400" />
+        <RibbonStat label="Current Scenario" value={activeScenario.replace(/_/g, ' ').toUpperCase()} sub={demoVoyage.active ? `Demo Voyage · phase ${demoVoyage.phaseIndex + 1}` : undefined} />
+        <RibbonStat label="Data Provenance" value={dataModeLabel} sub={dataModeSub} valueClass="text-critical-400" />
+        <RibbonStat label="Simulation Speed" value={`${speedMultiplier}x`} valueClass={isPlaying ? 'text-healthy-400' : 'text-warning-400'} sub={isPlaying ? 'running' : 'paused'} />
         <RibbonStat label="UTC Time" value={formatUtc(snapshot.simTimeIso)} />
       </div>
     </header>

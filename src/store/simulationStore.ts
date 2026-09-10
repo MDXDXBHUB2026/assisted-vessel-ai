@@ -3,6 +3,7 @@ import type { OperationalMode, PocExecutionMode, RequiredAuthority, ScenarioId, 
 import { OPERATIONAL_MODE_LABELS } from '@/types'
 import { buildInitialSimulationState, type AdapterStatuses, type SimulationState } from '@/simulation/state'
 import { tick } from '@/simulation/engine'
+import { DEMO_VOYAGE_PHASES } from '@/simulation/demoVoyage'
 import { readStoredPocMode, writeStoredPocMode } from '@/services/pocMode'
 import { resolveTelemetryAdapter } from '@/services/adapters/telemetryAdapter'
 import { resolveWeatherAdapter } from '@/services/adapters/weatherAdapter'
@@ -26,6 +27,10 @@ interface SimulationStore extends SimulationState {
 
   setPocMode: (mode: PocExecutionMode) => void
   probeConnectedAdapters: () => Promise<void>
+
+  startDemoVoyage: () => void
+  skipToPhase: (index: number) => void
+  resetDemoVoyage: () => void
 
   decideRecommendation: (
     id: string,
@@ -79,12 +84,66 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
     void get().probeConnectedAdapters()
   },
 
+  startDemoVoyage: () => {
+    const state = get()
+    const first = DEMO_VOYAGE_PHASES[0]!
+    set({
+      activeScenario: first.scenario,
+      scenarioElapsedMinutes: 0,
+      scenarioTriggers: {},
+      demoVoyage: { active: true, phaseIndex: 0, phaseElapsedMinutes: 0 },
+      isPlaying: true,
+      auditEvents: [
+        {
+          id: `AUD-DEMO-${Date.now()}`,
+          timestampIso: state.snapshot.simTimeIso,
+          operatingMode: OPERATIONAL_MODE_LABELS[state.snapshot.operationalMode],
+          scenarioId: first.scenario,
+          kind: 'scenario',
+          event: `Demo Voyage started: "${first.title}".`,
+          outcome: 'started',
+        },
+        ...state.auditEvents,
+      ],
+    })
+  },
+
+  skipToPhase: (index) => {
+    const state = get()
+    const phase = DEMO_VOYAGE_PHASES[index]
+    if (!phase) return
+    set({
+      activeScenario: phase.scenario,
+      scenarioElapsedMinutes: 0,
+      scenarioTriggers: {},
+      demoVoyage: { active: true, phaseIndex: index, phaseElapsedMinutes: 0 },
+      auditEvents: [
+        {
+          id: `AUD-DEMO-${Date.now()}`,
+          timestampIso: state.snapshot.simTimeIso,
+          operatingMode: OPERATIONAL_MODE_LABELS[state.snapshot.operationalMode],
+          scenarioId: phase.scenario,
+          kind: 'scenario',
+          event: `Demo Voyage skipped to phase: "${phase.title}".`,
+          outcome: 'phase_skipped',
+        },
+        ...state.auditEvents,
+      ],
+    })
+  },
+
+  resetDemoVoyage: () => {
+    set({ demoVoyage: { active: false, phaseIndex: 0, phaseElapsedMinutes: 0 } })
+    get().resetEnvironment()
+  },
+
   setScenario: (scenario) => {
     const state = get()
     set({
       activeScenario: scenario,
       scenarioElapsedMinutes: 0,
       scenarioTriggers: {},
+      demoVoyage: { ...state.demoVoyage, active: false },
       auditEvents: [
         {
           id: `AUD-SCN-${Date.now()}`,

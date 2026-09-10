@@ -7,6 +7,8 @@ export interface MachineryAnalysis {
   baselineLubOilPressureBar: number
   actualExhaustDeviationC: number
   actualLubOilPressureBar: number
+  cylinderExhaustDeviationsC: number[]
+  cylinderSpreadC: number
   exhaustSlopePerSample: number
   lubOilSlopePerSample: number
   exhaustPersistence: number
@@ -23,30 +25,35 @@ export interface MachineryAnalysis {
 
 const BASELINE_EXHAUST_DEVIATION_C = 3
 const BASELINE_LUB_OIL_PRESSURE_BAR = 4.2
+const BASELINE_CYLINDER_SPREAD_C = 0.6
 
 /**
- * Genuine time-series analytics: combines the instantaneous deviation from baseline with the
- * rolling trend (slope) and persistence of that deviation across the recent sample window,
- * rather than scoring a single point-in-time reading. This is what lets the engine-degradation
- * scenario be detected as a *developing* condition rather than a step-change status flag.
+ * Genuine, multivariate time-series analytics: combines instantaneous deviation from baseline,
+ * the rolling trend (slope) and persistence of that deviation, and the spread across individual
+ * cylinder exhaust readings — a widening spread is itself diagnostic of a localised (single-unit)
+ * problem even before the fleet-average deviation looks alarming. None of this is a single
+ * point-in-time formula; every term is derived from the live rolling telemetry window.
  */
-export function analyseMainEngine(snapshot: VesselSnapshot, history?: { exhaustTempDeviationC: HistoryBuffer; lubOilPressureBar: HistoryBuffer }): MachineryAnalysis {
-  const { exhaustTempDeviationC, lubOilPressureBar } = snapshot.mainEngine
+export function analyseMainEngine(snapshot: VesselSnapshot, history?: { exhaustTempDeviationC: HistoryBuffer; lubOilPressureBar: HistoryBuffer; cylinderSpreadC?: HistoryBuffer }): MachineryAnalysis {
+  const { exhaustTempDeviationC, lubOilPressureBar, cylinderExhaustDeviationsC } = snapshot.mainEngine
 
   const exhaustHistory = history?.exhaustTempDeviationC
   const lubOilHistory = history?.lubOilPressureBar
   const sampleCount = exhaustHistory?.values.length ?? 0
 
+  const cylinderSpreadC = Math.max(...cylinderExhaustDeviationsC) - Math.min(...cylinderExhaustDeviationsC)
+
   const thermalExcess = Math.max(0, exhaustTempDeviationC - BASELINE_EXHAUST_DEVIATION_C)
   const oilPressureDrop = Math.max(0, BASELINE_LUB_OIL_PRESSURE_BAR - lubOilPressureBar)
+  const spreadExcess = Math.max(0, cylinderSpreadC - BASELINE_CYLINDER_SPREAD_C)
 
   const exhaustSlopePerSample = exhaustHistory ? slopePerSample(exhaustHistory) : 0
   const lubOilSlopePerSample = lubOilHistory ? slopePerSample(lubOilHistory) : 0
   const exhaustPersistence = exhaustHistory ? persistenceAbove(exhaustHistory, BASELINE_EXHAUST_DEVIATION_C + 5) : 0
   const lubOilPersistence = lubOilHistory ? persistenceBelow(lubOilHistory, BASELINE_LUB_OIL_PRESSURE_BAR - 0.3) : 0
 
-  // Point deviation component
-  const deviationComponent = thermalExcess * 2.0 + oilPressureDrop * 16
+  // Point deviation component (average exhaust deviation, oil pressure drop, cylinder spread)
+  const deviationComponent = thermalExcess * 2.0 + oilPressureDrop * 16 + spreadExcess * 6
   // Trend component — only a *worsening* slope counts (rising exhaust temp, falling oil pressure)
   const trendComponent = clamp(exhaustSlopePerSample, 0, 3) * 9 + clamp(-lubOilSlopePerSample, 0, 0.3) * 40
   // Persistence component — a deviation sustained across the recent window is weighted higher
@@ -62,13 +69,17 @@ export function analyseMainEngine(snapshot: VesselSnapshot, history?: { exhaustT
   let maintenanceConsequence: string
   let recommendedResponse: string
 
+  const localisedFault = spreadExcess > 3 && thermalExcess < 15
+
   if (anomalyScore < 12) {
     probableCondition = 'Normal combustion and lubrication parameters'
     consequence = 'None — condition within expected operating envelope.'
     maintenanceConsequence = 'No maintenance action indicated.'
     recommendedResponse = 'Continue routine monitoring.'
   } else if (anomalyScore < 35) {
-    probableCondition = 'Early-stage thermal deviation, possible fuel injector or turbocharger fouling trend'
+    probableCondition = localisedFault
+      ? 'Early-stage single-cylinder deviation — possible localised injector or fouling on the affected unit'
+      : 'Early-stage thermal deviation, possible fuel injector or turbocharger fouling trend'
     consequence = 'Minor efficiency loss if trend continues uncorrected.'
     maintenanceConsequence = 'Add to next routine inspection checklist; no schedule change required yet.'
     recommendedResponse = 'Increase monitoring frequency; schedule engineer inspection at next suitable opportunity.'
@@ -92,6 +103,8 @@ export function analyseMainEngine(snapshot: VesselSnapshot, history?: { exhaustT
     baselineLubOilPressureBar: BASELINE_LUB_OIL_PRESSURE_BAR,
     actualExhaustDeviationC: exhaustTempDeviationC,
     actualLubOilPressureBar: lubOilPressureBar,
+    cylinderExhaustDeviationsC,
+    cylinderSpreadC,
     exhaustSlopePerSample,
     lubOilSlopePerSample,
     exhaustPersistence,

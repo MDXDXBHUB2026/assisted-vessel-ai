@@ -4,6 +4,7 @@ import type { SimulationState } from './state'
 import { clamp, mulberry32, stepTowards } from '@/utils/random'
 import { advanceOwnPosition, courseToNextWaypoint, updateTargets } from './navigation'
 import { computeScenarioTargets, SCENARIO_RAMP_MINUTES } from './scenarioEffects'
+import { DEMO_VOYAGE_PHASES } from './demoVoyage'
 import { recomputeSystemHealth } from './health'
 import { buildDesiredAlarms, mergeAlarms } from './alarms'
 import { pushSample } from './telemetryHistory'
@@ -67,6 +68,20 @@ export function tick(prev: SimulationState, dtMinutesBase: number): SimulationSt
   // --- main engine ---
   const exhaustTempDeviationC = Math.max(0, stepTowards(prev.snapshot.mainEngine.exhaustTempDeviationC, targets.exhaustTempDeviationC, 0.5, 0.06, rng))
   const lubOilPressureBar = clamp(stepTowards(prev.snapshot.mainEngine.lubOilPressureBar, targets.lubOilPressureBar, 0.03, 0.06, rng), 1.5, 5)
+
+  // Per-cylinder exhaust deviations: natural small inter-cylinder variance, plus — during engine
+  // degradation — a localised extra drift on one unit, producing a genuinely widening spread
+  // (a distinct multivariate signal from the fleet-average deviation above).
+  const CYLINDER_OFFSETS = [0, -0.2, 0.15, -0.15, 0.2, -0.05]
+  const LOCALISED_CYLINDER_INDEX = 2
+  const localisedExtra = prev.activeScenario === 'engine_degradation' ? severity * 16 : 0
+  const cylinderExhaustDeviationsC = prev.snapshot.mainEngine.cylinderExhaustDeviationsC.map((prevVal, i) => {
+    const target = targets.exhaustTempDeviationC + (CYLINDER_OFFSETS[i] ?? 0) + (i === LOCALISED_CYLINDER_INDEX ? localisedExtra : 0)
+    return Math.max(0, stepTowards(prevVal, target, 0.4, 0.08, rng))
+  })
+
+  const rpm = clamp(stepTowards(prev.snapshot.mainEngine.rpm, 84, 0.3, 0.1, rng), 70, 95)
+  const loadPercent = clamp(stepTowards(prev.snapshot.mainEngine.loadPercent, 72 + severity * (prev.activeScenario === 'engine_degradation' ? 8 : 0), 0.5, 0.1, rng), 50, 95)
 
   // --- environment ---
   const windSpeedKn = clamp(stepTowards(prev.snapshot.environment.windSpeedKn, targets.windSpeedKn, 0.6, 0.05, rng), 0, 70)
@@ -149,8 +164,11 @@ export function tick(prev: SimulationState, dtMinutesBase: number): SimulationSt
     },
     mainEngine: {
       ...prev.snapshot.mainEngine,
+      rpm,
+      loadPercent,
       exhaustTempDeviationC,
       exhaustTempAvgC: 369 + exhaustTempDeviationC,
+      cylinderExhaustDeviationsC,
       lubOilPressureBar,
       runningHours: prev.snapshot.mainEngine.runningHours + dtMinutes / 60,
     },
@@ -191,16 +209,25 @@ export function tick(prev: SimulationState, dtMinutesBase: number): SimulationSt
   }
 
   // --- telemetry history (genuine time-series backing for trend/anomaly analytics) ---
-  const telemetryHistory = {
+  const cylinderSpreadC = Math.max(...cylinderExhaustDeviationsC) - Math.min(...cylinderExhaustDeviationsC)
+
+  const telemetryHistoryPartial = {
     exhaustTempDeviationC: pushSample(prev.telemetryHistory.exhaustTempDeviationC, simTimeMs, exhaustTempDeviationC),
+    cylinderSpreadC: pushSample(prev.telemetryHistory.cylinderSpreadC, simTimeMs, cylinderSpreadC),
     lubOilPressureBar: pushSample(prev.telemetryHistory.lubOilPressureBar, simTimeMs, lubOilPressureBar),
     fuelConsumptionRateTonPerDay: pushSample(prev.telemetryHistory.fuelConsumptionRateTonPerDay, simTimeMs, fuelConsumptionRateTonPerDay),
     gnssConfidence: pushSample(prev.telemetryHistory.gnssConfidence, simTimeMs, gnssConfidence),
     satelliteConfidence: pushSample(prev.telemetryHistory.satelliteConfidence, simTimeMs, satelliteConfidence),
     blackoutRiskScore: pushSample(prev.telemetryHistory.blackoutRiskScore, simTimeMs, blackoutRiskScore),
+    rpm: pushSample(prev.telemetryHistory.rpm, simTimeMs, rpm),
+    loadPercent: pushSample(prev.telemetryHistory.loadPercent, simTimeMs, loadPercent),
   }
 
-  const machineryAnalysis = analyseMainEngine(snapshotDraft, telemetryHistory)
+  const machineryAnalysis = analyseMainEngine(snapshotDraft, telemetryHistoryPartial)
+  const telemetryHistory = {
+    ...telemetryHistoryPartial,
+    anomalyScore: pushSample(prev.telemetryHistory.anomalyScore, simTimeMs, machineryAnalysis.anomalyScore),
+  }
 
   const { systemHealth, overallHealth } = recomputeSystemHealth(snapshotDraft, machineryAnalysis, commsDegraded, gnssDegraded)
   const snapshot = { ...snapshotDraft, systemHealth, overallHealth }
@@ -344,6 +371,45 @@ export function tick(prev: SimulationState, dtMinutesBase: number): SimulationSt
   // --- fleet mirror for shore centre ---
   const fleet = prev.fleet.map((f) => (f.vesselId === 'own' ? { ...f, riskLevel: overallHealthToRisk(overallHealth), assistanceMode: overallHealth, position: { latitude: position.latitude, longitude: position.longitude }, communicationsOk: satelliteLinkUp } : f))
 
+  // --- own-ship historical track (for the navigation operating picture) ---
+  const ownTrack = [...prev.ownTrack, position].slice(-240)
+
+  // --- store-and-forward: queue while the shore link is down, synchronise honestly on recovery ---
+  const wasLinkUp = prev.snapshot.communications.satelliteLinkUp
+  let syncQueueCount = prev.syncQueueCount
+  if (!satelliteLinkUp) {
+    syncQueueCount += newAuditEvents.length + (newlyRaised.length > 0 ? 1 : 0) + 1
+  } else if (!wasLinkUp && satelliteLinkUp && syncQueueCount > 0) {
+    pushAudit({ kind: 'fallback_transition', event: `Ship-shore link restored. Store-and-forward synchronisation delivered ${syncQueueCount} queued record(s) to shore.`, outcome: 'synchronised' })
+    syncQueueCount = 0
+  }
+
+  // --- demo voyage phase sequencing ---
+  let activeScenario = prev.activeScenario
+  let demoVoyage = prev.demoVoyage
+  let finalScenarioElapsedMinutes = scenarioElapsedMinutes
+  let finalScenarioTriggers = scenarioTriggers
+  if (prev.demoVoyage.active) {
+    const phaseElapsedMinutes = prev.demoVoyage.phaseElapsedMinutes + dtMinutes
+    const currentPhase = DEMO_VOYAGE_PHASES[prev.demoVoyage.phaseIndex]
+    if (currentPhase && phaseElapsedMinutes >= currentPhase.durationMinutes) {
+      const nextIndex = prev.demoVoyage.phaseIndex + 1
+      const nextPhase = DEMO_VOYAGE_PHASES[nextIndex]
+      if (nextPhase) {
+        activeScenario = nextPhase.scenario
+        finalScenarioElapsedMinutes = 0
+        finalScenarioTriggers = {}
+        demoVoyage = { active: true, phaseIndex: nextIndex, phaseElapsedMinutes: 0 }
+        pushAudit({ kind: 'scenario', event: `Demo Voyage phase advanced: "${nextPhase.title}" (scenario: ${nextPhase.scenario.replace(/_/g, ' ')}).`, outcome: 'phase_advanced' })
+      } else {
+        demoVoyage = { active: false, phaseIndex: prev.demoVoyage.phaseIndex, phaseElapsedMinutes }
+        pushAudit({ kind: 'scenario', event: 'Demo Voyage complete. Review the audit trail and operational value for this session.', outcome: 'complete' })
+      }
+    } else {
+      demoVoyage = { ...prev.demoVoyage, phaseElapsedMinutes }
+    }
+  }
+
   return {
     ...prev,
     snapshot,
@@ -354,11 +420,15 @@ export function tick(prev: SimulationState, dtMinutesBase: number): SimulationSt
     auditEvents: [...newAuditEvents.reverse(), ...prev.auditEvents],
     fleet,
     voyagePlan,
-    scenarioElapsedMinutes,
-    scenarioTriggers,
+    activeScenario,
+    scenarioElapsedMinutes: finalScenarioElapsedMinutes,
+    scenarioTriggers: finalScenarioTriggers,
     nextIdCounter: idCounter,
     telemetryHistory,
     machineryAnalysis,
+    ownTrack,
+    syncQueueCount,
+    demoVoyage,
   }
 }
 

@@ -57,20 +57,28 @@ export function persistenceBelow(buf: HistoryBuffer, threshold: number, window =
 
 export interface TelemetryHistoryState {
   exhaustTempDeviationC: HistoryBuffer
+  cylinderSpreadC: HistoryBuffer
   lubOilPressureBar: HistoryBuffer
   fuelConsumptionRateTonPerDay: HistoryBuffer
   gnssConfidence: HistoryBuffer
   satelliteConfidence: HistoryBuffer
   blackoutRiskScore: HistoryBuffer
+  rpm: HistoryBuffer
+  loadPercent: HistoryBuffer
+  anomalyScore: HistoryBuffer
 }
 
 export function buildInitialTelemetryHistory(): TelemetryHistoryState {
   return {
     exhaustTempDeviationC: createEmptyHistory(),
+    cylinderSpreadC: createEmptyHistory(),
     lubOilPressureBar: createEmptyHistory(),
     fuelConsumptionRateTonPerDay: createEmptyHistory(),
     gnssConfidence: createEmptyHistory(),
     satelliteConfidence: createEmptyHistory(),
     blackoutRiskScore: createEmptyHistory(),
+    rpm: createEmptyHistory(),
+    loadPercent: createEmptyHistory(),
+    anomalyScore: createEmptyHistory(),
   }
 }

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useSimulationStore } from '@/store/simulationStore'
 import { Panel } from '@/components/ui/Panel'
 import { Button } from '@/components/ui/Button'
-import { Sparkline } from '@/components/charts/Sparkline'
+import { StreamingChart } from '@/components/charts/StreamingChart'
 import { Modal } from '@/components/ui/Modal'
 import { InstrumentRow } from '@/components/ui/InstrumentRow'
 import { ProvenanceTag } from '@/components/ui/Badge'
@@ -11,8 +11,7 @@ import { Gauge } from 'lucide-react'
 export function MachineryPage() {
   const snapshot = useSimulationStore((s) => s.snapshot)
   const analysis = useSimulationStore((s) => s.machineryAnalysis)
-  const exhaustHistory = useSimulationStore((s) => s.telemetryHistory.exhaustTempDeviationC.values)
-  const oilHistory = useSimulationStore((s) => s.telemetryHistory.lubOilPressureBar.values)
+  const history = useSimulationStore((s) => s.telemetryHistory)
   const decideRecommendation = useSimulationStore((s) => s.decideRecommendation)
   const recommendations = useSimulationStore((s) => s.recommendations).filter((r) => r.vesselFunction === 'main_engine')
   const [showEvidence, setShowEvidence] = useState(false)
@@ -26,30 +25,43 @@ export function MachineryPage() {
         <h1 className="flex items-center gap-2 text-lg font-semibold text-ink-000">
           <Gauge size={18} className="text-info-400" /> Machinery Intelligence
         </h1>
-        <p className="text-sm text-ink-500">Time-series condition monitoring: instantaneous deviation, rolling trend and persistence are combined into a single anomaly score — not a single-point threshold.</p>
+        <p className="text-sm text-ink-500">Time-series condition monitoring: instantaneous deviation, rolling trend, persistence and cylinder-to-cylinder spread are combined into a single anomaly score — not a single-point threshold.</p>
       </div>
 
       <div className="grid grid-cols-2 gap-x-6 gap-y-1 rounded-sm border border-panel-border bg-panel px-4 py-3 sm:grid-cols-4">
         <InstrumentRow label="Health Score" value={String(analysis.healthScore)} unit="/100" tone={tone} />
         <InstrumentRow label="Anomaly Score" value={String(analysis.anomalyScore)} unit="/100" tone={tone} />
         <InstrumentRow label="Exhaust Deviation" value={analysis.actualExhaustDeviationC.toFixed(1)} unit="°C" />
-        <InstrumentRow label="Lub Oil Pressure" value={analysis.actualLubOilPressureBar.toFixed(2)} unit="bar" />
+        <InstrumentRow label="Cylinder Spread" value={analysis.cylinderSpreadC.toFixed(1)} unit="°C" tone={analysis.cylinderSpreadC > 3 ? 'warning' : 'neutral'} />
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <Panel title="Exhaust Temperature Deviation Trend" dense>
-          <Sparkline data={exhaustHistory} color="#f0473a" height={90} />
+        <Panel title="Exhaust Temperature Deviation" dense>
+          <StreamingChart values={history.exhaustTempDeviationC.values} color="#f0473a" unit="°C" baseline={analysis.baselineExhaustDeviationC} thresholdMax={analysis.baselineExhaustDeviationC + 20} />
           <p className="mt-1 text-[11px] text-ink-500">Slope: {analysis.exhaustSlopePerSample >= 0 ? '+' : ''}{analysis.exhaustSlopePerSample.toFixed(2)} °C/sample · Persistence: {(analysis.exhaustPersistence * 100).toFixed(0)}%</p>
         </Panel>
-        <Panel title="Lubricating Oil Pressure Trend" dense>
-          <Sparkline data={oilHistory} color="#5BC0BE" height={90} />
+        <Panel title="Lubricating Oil Pressure" dense>
+          <StreamingChart values={history.lubOilPressureBar.values} color="#5BC0BE" unit="bar" baseline={analysis.baselineLubOilPressureBar} thresholdMin={analysis.baselineLubOilPressureBar - 1} />
           <p className="mt-1 text-[11px] text-ink-500">Slope: {analysis.lubOilSlopePerSample >= 0 ? '+' : ''}{analysis.lubOilSlopePerSample.toFixed(3)} bar/sample · Persistence: {(analysis.lubOilPersistence * 100).toFixed(0)}%</p>
         </Panel>
-        <Panel title="Sample Maturity" dense>
-          <div className="flex h-[90px] flex-col items-center justify-center text-center">
-            <span className="text-2xl font-bold text-ink-000 tabular-nums">{analysis.sampleCount}</span>
-            <span className="text-[11px] text-ink-500">rolling samples informing this analysis</span>
-          </div>
+        <Panel title="Cylinder Exhaust Spread" dense>
+          <StreamingChart values={history.cylinderSpreadC.values} color="#eda528" unit="°C" baseline={0.6} thresholdMax={3} />
+          <p className="mt-1 text-[11px] text-ink-500">Widening spread indicates a localised (single-unit) condition, distinct from the fleet-average deviation.</p>
+        </Panel>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+        <Panel title="RPM" dense>
+          <StreamingChart values={history.rpm.values} color="#94a3b8" unit="rpm" height={80} />
+        </Panel>
+        <Panel title="Engine Load" dense>
+          <StreamingChart values={history.loadPercent.values} color="#94a3b8" unit="%" height={80} />
+        </Panel>
+        <Panel title="Fuel Consumption" dense>
+          <StreamingChart values={history.fuelConsumptionRateTonPerDay.values} color="#5BC0BE" unit="t/day" height={80} baseline={snapshot.fuelEnergy.baselineConsumptionRateTonPerDay} />
+        </Panel>
+        <Panel title="Anomaly Score" dense>
+          <StreamingChart values={history.anomalyScore.values} color={tone === 'critical' ? '#f0473a' : tone === 'warning' ? '#eda528' : '#3ee08a'} unit="/100" height={80} thresholdMax={100} thresholdMin={65} />
         </Panel>
       </div>
 
@@ -57,7 +69,7 @@ export function MachineryPage() {
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div className="flex flex-col gap-2 text-sm">
             <Row label="Probable condition" value={analysis.probableCondition} />
-            <Row label="Confidence" value={`${analysis.confidencePercent}%`} />
+            <Row label="Confidence" value={`${analysis.confidencePercent}% (${analysis.sampleCount} rolling samples)`} />
             <Row label="Baseline exhaust deviation" value={`${analysis.baselineExhaustDeviationC.toFixed(1)} °C`} />
             <Row label="Baseline lub oil pressure" value={`${analysis.baselineLubOilPressureBar.toFixed(2)} bar`} />
             <Row label="Operational consequence if deferred" value={analysis.consequence} />

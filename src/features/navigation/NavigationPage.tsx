@@ -1,16 +1,21 @@
 import { useSimulationStore } from '@/store/simulationStore'
 import { Panel } from '@/components/ui/Panel'
-import { NavPlot } from '@/components/charts/NavPlot'
+import { NavigationCanvas } from '@/components/charts/NavigationCanvas'
 import { StatTile } from '@/components/ui/StatTile'
 import { RiskBadge } from '@/components/ui/Badge'
 import { ROUTE_WAYPOINTS } from '@/data/route'
 import { formatLatLon, formatDuration } from '@/utils/format'
+import { useInterpolatedNumber } from '@/hooks/useInterpolatedNumber'
+import { useInterpolatedHeading } from '@/hooks/useInterpolatedHeading'
 import { Compass, ShieldAlert } from 'lucide-react'
 
 export function NavigationPage() {
   const snapshot = useSimulationStore((s) => s.snapshot)
   const targets = useSimulationStore((s) => s.targets)
+  const ownTrack = useSimulationStore((s) => s.ownTrack)
   const recommendations = useSimulationStore((s) => s.recommendations).filter((r) => r.vesselFunction === 'navigation')
+  const smoothHeading = useInterpolatedHeading(snapshot.navigation.heading)
+  const smoothSpeed = useInterpolatedNumber(snapshot.navigation.speedOverGroundKn)
 
   return (
     <div className="flex flex-col gap-5">
@@ -26,16 +31,24 @@ export function NavigationPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <Panel title="Situational Plot" className="lg:col-span-2" dense>
-          <div className="aspect-square w-full">
-            <NavPlot own={snapshot.navigation.position} ownHeading={snapshot.navigation.heading} targets={targets} routeWaypoints={ROUTE_WAYPOINTS} />
-          </div>
+        <Panel title="Navigation Operating Picture" className="lg:col-span-2" dense>
+          <NavigationCanvas
+            own={snapshot.navigation.position}
+            ownHeadingDeg={snapshot.navigation.heading}
+            ownSpeedKn={snapshot.navigation.speedOverGroundKn}
+            targets={targets}
+            routeWaypoints={ROUTE_WAYPOINTS}
+            historicalTrack={ownTrack}
+            windSpeedKn={snapshot.environment.windSpeedKn}
+            windDirectionDeg={snapshot.environment.windDirectionDeg}
+            visibilityNm={snapshot.environment.visibilityNm}
+          />
         </Panel>
 
         <div className="flex flex-col gap-4">
           <div className="grid grid-cols-2 gap-3">
-            <StatTile label="Heading" value={snapshot.navigation.heading.toFixed(0)} unit="deg T" />
-            <StatTile label="SOG" value={snapshot.navigation.speedOverGroundKn.toFixed(1)} unit="kn" />
+            <StatTile label="Heading" value={smoothHeading.toFixed(0)} unit="deg T" />
+            <StatTile label="SOG" value={smoothSpeed.toFixed(1)} unit="kn" />
             <StatTile label="Visibility" value={snapshot.environment.visibilityNm.toFixed(1)} unit="nm" tone={snapshot.environment.visibilityNm < 3 ? 'warning' : 'neutral'} />
             <StatTile label="Sea State" value={String(snapshot.environment.seaState)} tone={snapshot.environment.seaState > 6 ? 'warning' : 'neutral'} />
           </div>

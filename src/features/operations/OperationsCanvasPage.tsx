@@ -4,7 +4,7 @@ import { Panel } from '@/components/ui/Panel'
 import { HealthBadge, RiskBadge, VerdictBadge, OddStatusBadge, AssistanceLevelTag } from '@/components/ui/Badge'
 import { InstrumentRow } from '@/components/ui/InstrumentRow'
 import { Sparkline } from '@/components/charts/Sparkline'
-import { NavPlot } from '@/components/charts/NavPlot'
+import { NavigationCanvas } from '@/components/charts/NavigationCanvas'
 import { ROUTE_WAYPOINTS } from '@/data/route'
 import { assessAllOdd } from '@/safety-engine/oddEngine'
 import { correlateAlarms } from '@/decision-engine/alarmCorrelation'
@@ -17,7 +17,7 @@ const MODES: OperationalMode[] = ['open_sea', 'coastal', 'traffic_separation', '
 
 export function OperationsCanvasPage() {
   const state = useSimulationStore()
-  const { snapshot, recommendations, rawAlarms, targets, hazards, auditEvents, activeScenario, machineryAnalysis } = state
+  const { snapshot, recommendations, rawAlarms, targets, hazards, auditEvents, activeScenario, machineryAnalysis, ownTrack } = state
   const awaiting = recommendations.filter((r) => r.status === 'awaiting_decision')
   const activeAlarms = rawAlarms.filter((a) => a.active)
   const { correlated, uncorrelatedCount } = correlateAlarms(rawAlarms)
@@ -62,9 +62,17 @@ export function OperationsCanvasPage() {
       <div className="grid grid-cols-12 gap-3">
         {/* Navigation operating picture */}
         <Panel title="Navigation Operating Picture" dense className="col-span-12 xl:col-span-5" action={<Link to="/vessel/navigation" className="flex items-center gap-1 text-[10px] text-info-400 hover:text-info-300">DETAIL <ArrowUpRight size={11} /></Link>}>
-          <div className="aspect-[4/3] w-full">
-            <NavPlot own={snapshot.navigation.position} ownHeading={snapshot.navigation.heading} targets={targets} routeWaypoints={ROUTE_WAYPOINTS} />
-          </div>
+          <NavigationCanvas
+            own={snapshot.navigation.position}
+            ownHeadingDeg={snapshot.navigation.heading}
+            ownSpeedKn={snapshot.navigation.speedOverGroundKn}
+            targets={targets}
+            routeWaypoints={ROUTE_WAYPOINTS}
+            historicalTrack={ownTrack}
+            windSpeedKn={snapshot.environment.windSpeedKn}
+            windDirectionDeg={snapshot.environment.windDirectionDeg}
+            visibilityNm={snapshot.environment.visibilityNm}
+          />
           <div className="mt-2 grid grid-cols-4 gap-x-3">
             <InstrumentRow label="Position" value={formatLatLon(snapshot.navigation.position.latitude, snapshot.navigation.position.longitude)} />
             <InstrumentRow label="Heading" value={snapshot.navigation.heading.toFixed(0)} unit="°T" />

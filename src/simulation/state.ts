@@ -1,7 +1,9 @@
 import type {
   AdapterConnectionState,
   AuditEvent,
+  DemoVoyageState,
   FleetVesselSummary,
+  GeoPosition,
   Hazard,
   MaintenanceItem,
   PocExecutionMode,
@@ -59,6 +61,12 @@ export interface SimulationState {
    * attempts one and falls back to the simulated/local implementation on failure. */
   pocMode: PocExecutionMode
   adapterStatuses: AdapterStatuses
+
+  /** Historical own-ship track for the navigation operating picture (most recent last). */
+  ownTrack: GeoPosition[]
+  /** Records "queued" while the shore link is down, illustrating store-and-forward recovery. */
+  syncQueueCount: number
+  demoVoyage: DemoVoyageState
 }
 
 export function buildInitialSimulationState(): SimulationState {
@@ -105,5 +113,8 @@ export function buildInitialSimulationState(): SimulationState {
       audit: 'simulated',
       shoreCases: 'simulated',
     },
+    ownTrack: [snapshot.navigation.position],
+    syncQueueCount: 0,
+    demoVoyage: { active: false, phaseIndex: 0, phaseElapsedMinutes: 0 },
   }
 }

@@ -44,6 +44,18 @@ Observe · Correlate · Detect · Predict · Optimise · Retrieve · Recommend �
 ### AI cannot:
 Assume command · Override the Master · Silently control navigation · Silently change propulsion · Bypass safety constraints · Execute high-risk actions without authority
 
+## 5a. Assistance-level framework
+
+| Level | Name | Behaviour |
+|---|---|---|
+| L0 | Conventional | Crew performs the operational function; the system does not assist it. |
+| L1 | Monitoring | System observes, correlates and alerts. No recommendation is generated. |
+| L2 | Decision Support | System analyses and recommends; a human decides. This is the default level for most assisted functions in this POC. |
+| L3 | Supervised Execution | A specifically permitted, low-risk action may proceed only after explicit human authorisation (demonstrated here by voyage-speed adoption). |
+| L4 | High Automation | Future conceptual capability only — not implemented for any safety-critical function in this POC, and no function is configured to reach it. |
+
+Each assisted function is configured independently and its *available* level is recalculated every simulation tick from the operational envelope, sensor confidence, connectivity and system health — see the in-app Envelope & Assistance view for the live per-function state.
+
 ## 6. Interaction model
 
 1. The system continuously senses and understands vessel condition (digital twin).

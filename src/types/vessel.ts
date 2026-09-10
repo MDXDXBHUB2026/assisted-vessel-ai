@@ -35,6 +35,10 @@ export interface MainEngineState {
   shaftPowerKw: number
   exhaustTempAvgC: number
   exhaustTempDeviationC: number
+  /** Per-cylinder exhaust temperature deviation (°C above baseline), one entry per monitored unit. A
+   * widening spread across cylinders is itself a genuine multivariate anomaly signal, independent
+   * of the average. */
+  cylinderExhaustDeviationsC: number[]
   lubOilPressureBar: number
   coolingWaterTempC: number
   fuelRackPosition: number
