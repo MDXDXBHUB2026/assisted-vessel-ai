@@ -5,6 +5,8 @@ const WALL_CLOCK_INTERVAL_MS = 1000
 /** Caps the real-time gap used for a single catch-up tick, so a throttled/backgrounded tab
  * resumes smoothly instead of jumping simulated time forward all at once. */
 const MAX_ELAPSED_SECONDS = 5
+/** How many missed intervals before the worker is presumed blocked and setInterval takes over. */
+const WORKER_WATCHDOG_INTERVALS = 3
 
 /**
  * A background tab's setInterval/setTimeout timers are throttled by browsers (down to once a
@@ -38,15 +40,46 @@ export function useSimulationLoop(): void {
       useSimulationStore.getState().stepIfPlaying(elapsedSeconds)
     }
 
-    if (typeof Worker !== 'undefined') {
-      try {
-        return createTickerWorker(onTick)
-      } catch {
-        // fall through to setInterval below
-      }
+    // Watchdog fallback. A Blob-URL worker blocked by Content-Security-Policy does not throw
+    // from the constructor — it simply never posts a message, so a try/catch around
+    // `new Worker()` cannot detect it and the simulated clock freezes silently with the UI still
+    // reporting "running". If no tick has arrived shortly after mount, abandon the worker and
+    // drive the clock from setInterval instead.
+    let tickReceived = false
+    let stopWorker: (() => void) | null = null
+    let intervalId: number | null = null
+    let watchdogId: number | null = null
+
+    const startInterval = () => {
+      if (intervalId !== null) return
+      intervalId = window.setInterval(onTick, WALL_CLOCK_INTERVAL_MS)
     }
 
-    const interval = window.setInterval(onTick, WALL_CLOCK_INTERVAL_MS)
-    return () => window.clearInterval(interval)
+    const onTickObserved = () => {
+      tickReceived = true
+      onTick()
+    }
+
+    if (typeof Worker !== 'undefined') {
+      try {
+        stopWorker = createTickerWorker(onTickObserved)
+        watchdogId = window.setTimeout(() => {
+          if (tickReceived) return
+          stopWorker?.()
+          stopWorker = null
+          startInterval()
+        }, WALL_CLOCK_INTERVAL_MS * WORKER_WATCHDOG_INTERVALS)
+      } catch {
+        startInterval()
+      }
+    } else {
+      startInterval()
+    }
+
+    return () => {
+      stopWorker?.()
+      if (intervalId !== null) window.clearInterval(intervalId)
+      if (watchdogId !== null) window.clearTimeout(watchdogId)
+    }
   }, [])
 }

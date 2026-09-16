@@ -1,5 +1,6 @@
-import type { HealthLevel, SystemHealthSummary, SystemState, VesselSnapshot } from '@/types'
+import type { HealthLevel, MeasuredStatus, SystemHealthSummary, SystemState, VesselSnapshot } from '@/types'
 import { worstHealth } from '@/types'
+import { clamp } from '@/utils/random'
 import type { MachineryAnalysis } from '@/decision-engine/machineryAnalytics'
 
 function levelFromScore(score: number): HealthLevel {
@@ -7,6 +8,20 @@ function levelFromScore(score: number): HealthLevel {
   if (score >= 65) return 'advisory'
   if (score >= 40) return 'warning'
   return 'critical'
+}
+
+/**
+ * Availability describes whether an area's *source data* is usable, independent of what that
+ * data says. It is deliberately NOT derived from any analytical confidence or health score: a
+ * condition-monitoring model becomes more confident as a fault develops, so using model
+ * confidence as an availability signal inverts the meaning and lets a badly degraded system
+ * report maximum "availability" precisely when it is worst. The safety engine gates on this.
+ */
+function availabilityStatusFrom(percent: number): MeasuredStatus {
+  if (percent >= 85) return 'ok'
+  if (percent >= 50) return 'degraded'
+  if (percent > 0) return 'stale'
+  return 'unavailable'
 }
 
 export function recomputeSystemHealth(
@@ -36,6 +51,39 @@ export function recomputeSystemHealth(
 
   const safetyHealth: HealthLevel = !snapshot.safetySystems.watertightIntegrityOk || snapshot.safetySystems.bilgeAlarmActive ? 'critical' : 'healthy'
 
+  // Auxiliary machinery health is derived from its own health score rather than hardcoded, so a
+  // degraded auxiliary plant can actually be reported (and can reach `overallHealth`).
+  const auxHealth = levelFromScore(snapshot.auxMachinery.auxEngineHealthScore)
+  const auxState: SystemState = auxHealth === 'critical' ? 'contingency' : auxHealth === 'warning' ? 'degraded' : 'normal'
+
+  // --- source-data availability, derived from sensor/feed liveness only ---------------------
+
+  // Navigation: how many of the three position/traffic feeds are up, scaled by GNSS integrity.
+  const navFeedsUp = [snapshot.navigation.gnssAvailable, snapshot.navigation.radarAvailable, snapshot.navigation.aisAvailable].filter(Boolean).length
+  const navAvailability = clamp((navFeedsUp / 3) * 100 * (snapshot.navigation.gnssAvailable ? clamp(navConfidence / 100, 0.4, 1) : 0.5), 0, 100)
+
+  // Machinery: telemetry channels reporting plausible values. A reading that is out of physical
+  // range is treated as an unusable sensor, not as an extreme-but-valid measurement.
+  const cylinderReadings = snapshot.mainEngine.cylinderExhaustDeviationsC
+  const cylindersPlausible = cylinderReadings.filter((v) => Number.isFinite(v) && v >= 0 && v < 200).length
+  const lubOilPlausible = Number.isFinite(snapshot.mainEngine.lubOilPressureBar) && snapshot.mainEngine.lubOilPressureBar > 0
+  const engineAvailability = cylinderReadings.length === 0
+    ? 0
+    : clamp((cylindersPlausible / cylinderReadings.length) * 100 * (lubOilPlausible ? 1 : 0.5), 0, 100)
+
+  // Communications: the shore link itself.
+  const commsAvailability = snapshot.communications.satelliteLinkUp ? clamp(snapshot.communications.satelliteConfidence, 0, 100) : 0
+
+  // Reefers: units still reporting on power. A unit in power fluctuation is a degraded feed.
+  const reeferUnits = snapshot.cargoReefer.reeferUnits
+  const reefersReporting = reeferUnits.filter((u) => u.powerStatus === 'on_power').length
+  const cargoAvailability = reeferUnits.length === 0 ? 0 : clamp((reefersReporting / reeferUnits.length) * 100, 0, 100)
+
+  const auxAvailability = Number.isFinite(snapshot.auxMachinery.auxEngineHealthScore) ? 98 : 0
+  const electricalAvailability = Number.isFinite(snapshot.electricalPower.blackoutRiskScore) ? 97 : 0
+  const fuelAvailability = Number.isFinite(snapshot.fuelEnergy.fuelConsumptionRateTonPerDay) ? 96 : 0
+  const safetyAvailability = 99
+
   const systemHealth: SystemHealthSummary[] = [
     {
       area: 'navigation',
@@ -43,6 +91,8 @@ export function recomputeSystemHealth(
       state: navState,
       headline: gnssDegraded ? `GNSS confidence reduced to ${navConfidence.toFixed(0)}%` : 'All navigation sensors nominal',
       confidence: Math.round(navConfidence),
+      dataAvailabilityPercent: Math.round(navAvailability),
+      availabilityStatus: availabilityStatusFrom(navAvailability),
     },
     {
       area: 'main_engine',
@@ -50,13 +100,17 @@ export function recomputeSystemHealth(
       state: engineState,
       headline: machineryAnalysis.probableCondition,
       confidence: machineryAnalysis.confidencePercent,
+      dataAvailabilityPercent: Math.round(engineAvailability),
+      availabilityStatus: availabilityStatusFrom(engineAvailability),
     },
     {
       area: 'auxiliary_machinery',
-      health: 'healthy',
-      state: 'normal',
-      headline: 'Auxiliary machinery nominal',
+      health: auxHealth,
+      state: auxState,
+      headline: auxHealth === 'healthy' ? 'Auxiliary machinery nominal' : `Auxiliary plant health score ${snapshot.auxMachinery.auxEngineHealthScore.toFixed(0)}`,
       confidence: snapshot.auxMachinery.auxEngineHealthScore,
+      dataAvailabilityPercent: Math.round(auxAvailability),
+      availabilityStatus: availabilityStatusFrom(auxAvailability),
     },
     {
       area: 'electrical_power',
@@ -64,6 +118,8 @@ export function recomputeSystemHealth(
       state: electricalHealth === 'critical' ? 'contingency' : electricalHealth === 'warning' ? 'degraded' : 'normal',
       headline: electricalHealth === 'healthy' ? 'Power generation stable, healthy reserve' : `Elevated blackout risk score (${snapshot.electricalPower.blackoutRiskScore.toFixed(0)})`,
       confidence: 95,
+      dataAvailabilityPercent: Math.round(electricalAvailability),
+      availabilityStatus: availabilityStatusFrom(electricalAvailability),
     },
     {
       area: 'fuel_energy',
@@ -71,6 +127,8 @@ export function recomputeSystemHealth(
       state: fuelHealth === 'warning' ? 'degraded' : 'normal',
       headline: fuelHealth === 'healthy' ? 'Fuel consumption tracking baseline' : `Consumption ${fuelExcess.toFixed(0)}% above baseline`,
       confidence: 92,
+      dataAvailabilityPercent: Math.round(fuelAvailability),
+      availabilityStatus: availabilityStatusFrom(fuelAvailability),
     },
     {
       area: 'cargo_reefer',
@@ -78,6 +136,8 @@ export function recomputeSystemHealth(
       state: cargoState,
       headline: cargoHealth === 'healthy' ? 'All reefer units within set point' : 'One or more reefer units outside set point',
       confidence: 96,
+      dataAvailabilityPercent: Math.round(cargoAvailability),
+      availabilityStatus: availabilityStatusFrom(cargoAvailability),
     },
     {
       area: 'safety',
@@ -85,6 +145,8 @@ export function recomputeSystemHealth(
       state: safetyHealth === 'critical' ? 'contingency' : 'normal',
       headline: safetyHealth === 'healthy' ? 'Safety systems ready' : 'Active safety condition requires attention',
       confidence: 98,
+      dataAvailabilityPercent: safetyAvailability,
+      availabilityStatus: availabilityStatusFrom(safetyAvailability),
     },
     {
       area: 'communications',
@@ -92,6 +154,8 @@ export function recomputeSystemHealth(
       state: commsState,
       headline: commsDegraded ? 'Ship-shore link degraded — fallback mode active' : 'Satellite and VHF links nominal',
       confidence: Math.round(snapshot.communications.satelliteConfidence),
+      dataAvailabilityPercent: Math.round(commsAvailability),
+      availabilityStatus: availabilityStatusFrom(commsAvailability),
     },
   ]
 

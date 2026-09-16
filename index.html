@@ -2,6 +2,22 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      Defence in depth. This application has no injection sinks today (no dangerouslySetInnerHTML,
+      no innerHTML, no eval), and this policy keeps it that way if one is ever introduced.
+      worker-src blob: is required: the simulation clock runs in a Web Worker created from a Blob
+      URL (src/hooks/useSimulationLoop.ts) to escape background-tab timer throttling. Omitting it
+      silently freezes the simulated clock — the worker constructs but never posts a message, so
+      a try/catch around the constructor does not see it.
+
+      NOTE: frame-ancestors is ignored in meta form and needs a real response header; GitHub Pages
+      cannot set headers, so clickjacking protection is NOT covered by this deployment. That
+      limitation is recorded in docs/assumptions.md rather than papered over here.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; worker-src 'self' blob:; child-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
     <link rel="icon" type="image/svg+xml" href="favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Assisted Vessel Intelligence — Demonstrator</title>

@@ -49,6 +49,21 @@ export interface SimulationState {
   speedMultiplier: number
   seed: number
   nextIdCounter: number
+  /**
+   * Monotonic tick counter, never reset. Used to seed the per-tick PRNG so that the noise term
+   * is genuinely zero-mean over time. Seeding from `scenarioElapsedMinutes` alone meant that in
+   * normal operations — where that value decays to exactly 0 and stays there — the same seed was
+   * reused every tick, so every metric received an identical, near-maximal "random" nudge each
+   * tick. That is a fixed bias, not a random walk, and it pushed steady-state values off target.
+   */
+  tickCount: number
+  /**
+   * Shore case numbering, carried across a RESET ENVIRONMENT. Deriving the number from
+   * `shoreCases.length + 1` restarted at CASE-0001 after a reset and reused an ID already
+   * referenced by retained audit records. A dedicated counter keeps the ID human-readable
+   * (CASE-0001) while remaining unique for the whole session.
+   */
+  nextShoreCaseNumber: number
 
   /** V2: genuine time-series history backing the trend/anomaly analytics. */
   telemetryHistory: TelemetryHistoryState
@@ -69,9 +84,16 @@ export interface SimulationState {
   demoVoyage: DemoVoyageState
 }
 
-export function buildInitialSimulationState(): SimulationState {
+/**
+ * @param startIdCounter continue the monotonic ID sequence from an existing session. RESET
+ * ENVIRONMENT deliberately retains the prior audit trail, so restarting the counter at 1 would
+ * mint IDs that collide with records already in that trail — an audit trail with duplicate IDs
+ * cannot be relied on as evidence.
+ */
+export function buildInitialSimulationState(startIdCounter = 1, startShoreCaseNumber = 1): SimulationState {
   const snapshot = buildBaselineSnapshot()
   const telemetryHistory = buildInitialTelemetryHistory()
+  const initialAuditId = `AUD-${String(startIdCounter).padStart(6, '0')}`
 
   return {
     snapshot,
@@ -82,7 +104,7 @@ export function buildInitialSimulationState(): SimulationState {
     recommendations: [],
     auditEvents: [
       {
-        id: 'AUD-000001',
+        id: initialAuditId,
         timestampIso: SIM_START_ISO,
         operatingMode: 'Open Sea',
         scenarioId: null,
@@ -100,7 +122,10 @@ export function buildInitialSimulationState(): SimulationState {
     isPlaying: true,
     speedMultiplier: 1,
     seed: 42,
-    nextIdCounter: 1,
+    // `nextIdCounter` is the LAST id number issued; the next mint is this + 1.
+    nextIdCounter: startIdCounter,
+    tickCount: 0,
+    nextShoreCaseNumber: startShoreCaseNumber,
     telemetryHistory,
     machineryAnalysis: analyseMainEngine(snapshot),
     pocMode: 'offline',

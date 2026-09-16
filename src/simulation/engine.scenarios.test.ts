@@ -35,8 +35,13 @@ describe('ENGINE DEGRADATION scenario — full sense-to-audit chain', () => {
     expect(rec).toBeDefined()
     expect(rec!.requiredAuthority).toBe('chief_engineer')
     expect(rec!.status).toBe('awaiting_decision')
-    expect(['passed', 'conditional', 'blocked']).toContain(rec!.safetyValidation.verdict)
-    expect(rec!.oddStatus).toBeDefined()
+    // Assert the actual verdict, not merely that it is a member of its own union type (which
+    // the type system already guarantees and which therefore verifies nothing). Under nominal
+    // environmental conditions a machinery recommendation with Chief Engineer authority should
+    // clear safety validation; if it does not, the check-list must say why.
+    expect(rec!.safetyValidation.verdict).toBe('passed')
+    expect(rec!.safetyValidation.checks.every((c) => c.passed)).toBe(true)
+    expect(rec!.oddStatus).toBe('inside')
 
     // audit trail carries the whole chain
     const kinds = new Set(state.auditEvents.map((e) => e.kind))
@@ -65,17 +70,25 @@ describe('COLLISION-RISK DEVELOPMENT scenario', () => {
     const target = state.targets.find((t) => t.id === 'TGT-002')!
     expect(target.cpaNm).toBeLessThan(initialTarget.cpaNm)
 
-    // own ship's heading is still governed only by route-following logic, never by the collision scenario
-    expect(state.snapshot.navigation.heading).not.toBeNaN()
-    expect(typeof state.snapshot.navigation.heading).toBe('number')
-    expect(state.snapshot.navigation.heading).not.toBe(undefined)
-    void initialHeading
+    // NAV-003 — the project's central claim. This is a differential test: the same engine is run
+    // for the same number of ticks with and without the collision scenario active, and own-ship
+    // heading, speed and position must be IDENTICAL. Asserting that a heading is a number (as
+    // this test previously did, discarding its own captured baseline with `void initialHeading`)
+    // does not verify that the system never steers the ship.
+    const control = runScenario('normal_operations', 200)
+    expect(state.snapshot.navigation.heading).toBe(control.snapshot.navigation.heading)
+    expect(state.snapshot.navigation.speedOverGroundKn).toBe(control.snapshot.navigation.speedOverGroundKn)
+    expect(state.snapshot.navigation.position).toEqual(control.snapshot.navigation.position)
+    expect(state.voyagePlan.userModifiedSpeedKn).toBeNull()
+    // and the baseline heading is genuinely used, not discarded
+    expect(Number.isFinite(initialHeading)).toBe(true)
 
+    // The recommendation must actually be produced — an `if (rec)` guard here would let the test
+    // pass silently when the whole path never fires.
     const rec = state.recommendations.find((r) => r.vesselFunction === 'navigation' && r.title.includes('Closing Range'))
-    if (rec) {
-      expect(rec.requiredAuthority).toBe('officer_of_the_watch')
-      expect(rec.recommendedResponse).toMatch(/course alteration|speed reduction|enhanced monitoring/i)
-    }
+    expect(rec).toBeDefined()
+    expect(rec!.requiredAuthority).toBe('officer_of_the_watch')
+    expect(rec!.recommendedResponse).toMatch(/course alteration|speed reduction|enhanced monitoring/i)
   })
 })
 
@@ -167,15 +180,24 @@ describe('DEMO VOYAGE phase sequencing', () => {
 describe('RESET / re-activation', () => {
   it('allows a scenario to be re-triggered after returning to normal operations', () => {
     let state = runScenario('engine_degradation', 260)
-    expect(state.recommendations.length).toBeGreaterThan(0)
+    const firstRunCount = state.recommendations.filter((r) => r.vesselFunction === 'main_engine').length
+    expect(firstRunCount).toBeGreaterThan(0)
 
-    // return to normal — severity decays and trigger flags reset
-    state = { ...state, activeScenario: 'normal_operations', scenarioElapsedMinutes: 0, scenarioTriggers: {} }
-    for (let i = 0; i < 5; i++) state = tick(state, 1)
+    // Return to normal and let the ENGINE decay severity and clear its own trigger flags.
+    // Reconstructing `scenarioTriggers: {}` by hand here would bypass the very mechanism under
+    // test, and the final assertion would then be satisfied by the first run's output alone.
+    state = { ...state, activeScenario: 'normal_operations' }
+    for (let i = 0; i < 40; i++) state = tick(state, 1)
 
-    // re-activate: should be able to fire again from a clean trigger state
+    // Decide the outstanding recommendation so de-duplication does not suppress the re-fire.
+    state = {
+      ...state,
+      recommendations: state.recommendations.map((r) => (r.status === 'awaiting_decision' ? { ...r, status: 'rejected' as const } : r)),
+    }
+
     state = { ...state, activeScenario: 'engine_degradation', scenarioElapsedMinutes: 0 }
     for (let i = 0; i < 260; i++) state = tick(state, 1)
-    expect(state.recommendations.filter((r) => r.vesselFunction === 'main_engine').length).toBeGreaterThan(0)
+    const secondRunCount = state.recommendations.filter((r) => r.vesselFunction === 'main_engine').length
+    expect(secondRunCount).toBeGreaterThan(firstRunCount)
   })
 })

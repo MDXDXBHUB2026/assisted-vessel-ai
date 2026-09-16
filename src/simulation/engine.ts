@@ -23,9 +23,19 @@ import {
 
 const REEFER_EXCURSION_INDEX = 3
 
+/** Bounds on session-lifetime collections. Unbounded growth is a slow leak in a long demo run. */
+const MAX_AUDIT_EVENTS = 2000
+const MAX_RECOMMENDATIONS = 200
+/** A recommendation left undecided for this long in simulated time is expired, not silently kept. */
+const RECOMMENDATION_EXPIRY_MINUTES = 240
+
 export function tick(prev: SimulationState, dtMinutesBase: number): SimulationState {
   const dtMinutes = dtMinutesBase * prev.speedMultiplier
-  const rng = mulberry32(Math.floor(prev.seed + prev.scenarioElapsedMinutes * 1000 + 1))
+  // Seed from a monotonic tick counter, not from scenarioElapsedMinutes. The latter decays to a
+  // constant 0 in normal operations, which reused one seed forever and turned the "random walk"
+  // into a fixed per-tick bias. Determinism is preserved: the same tick index yields the same draw.
+  const tickCount = prev.tickCount + 1
+  const rng = mulberry32(Math.floor(prev.seed + tickCount))
 
   let idCounter = prev.nextIdCounter
   const nextId = (prefix: string) => {
@@ -277,6 +287,13 @@ export function tick(prev: SimulationState, dtMinutesBase: number): SimulationSt
     if (condition && !scenarioTriggers[key]) {
       scenarioTriggers[key] = true
       const { functionId, ...content } = build()
+      // De-duplicate: an oscillating condition (a target passing while another closes) would
+      // otherwise stack near-identical cards in the decision queue. A product whose stated value
+      // is reducing crew workload through correlation must not flood its own decision channel.
+      const alreadyPending = recommendations.some(
+        (r) => r.status === 'awaiting_decision' && r.vesselFunction === content.vesselFunction && r.title === content.title,
+      )
+      if (alreadyPending) return
       const oddAssessment = currentOdd.find((o) => o.functionId === functionId)
       const safetyValidation = validateRecommendation({
         functionId,
@@ -359,6 +376,11 @@ export function tick(prev: SimulationState, dtMinutesBase: number): SimulationSt
   }
   if (prev.activeScenario !== 'safety_event') {
     scenarioTriggers['safety_hazard'] = false
+    // `maybeFire('safety_event_rec', true, ...)` is only ever called with condition === true, so
+    // its own reset branch can never run and the flag would latch for the whole session: a second
+    // safety_event raised a hazard with no recommendation, no safety validation and no audit of
+    // either — a silent gap in the exact chain this demonstrator exists to show.
+    scenarioTriggers['safety_event_rec'] = false
   }
 
   // --- voyage plan derived fields ---
@@ -378,7 +400,9 @@ export function tick(prev: SimulationState, dtMinutesBase: number): SimulationSt
   const wasLinkUp = prev.snapshot.communications.satelliteLinkUp
   let syncQueueCount = prev.syncQueueCount
   if (!satelliteLinkUp) {
-    syncQueueCount += newAuditEvents.length + (newlyRaised.length > 0 ? 1 : 0) + 1
+    // Count the records actually queued this tick. The previous `+ 1` per tick inflated the
+    // figure into the hundreds while only a handful of events had been generated.
+    syncQueueCount += newAuditEvents.length + newlyRaised.length
   } else if (!wasLinkUp && satelliteLinkUp && syncQueueCount > 0) {
     pushAudit({ kind: 'fallback_transition', event: `Ship-shore link restored. Store-and-forward synchronisation delivered ${syncQueueCount} queued record(s) to shore.`, outcome: 'synchronised' })
     syncQueueCount = 0
@@ -410,20 +434,63 @@ export function tick(prev: SimulationState, dtMinutesBase: number): SimulationSt
     }
   }
 
+  // --- re-validate undecided recommendations against the current state -----------------------
+  // A safety verdict computed once at generation time goes stale silently: the vessel changes
+  // mode, GNSS degrades, the envelope closes — and the card still shows the verdict and the
+  // check-list from when it was raised. Re-validating each tick keeps the displayed verdict
+  // truthful, and an audit event is written whenever a verdict actually changes.
+  const nowMs = new Date(simTimeIso).getTime()
+  const revalidated = recommendations.map((rec) => {
+    if (rec.status !== 'awaiting_decision') return rec
+
+    const ageMinutes = (nowMs - new Date(rec.timestampIso).getTime()) / 60_000
+    if (ageMinutes > RECOMMENDATION_EXPIRY_MINUTES) {
+      pushAudit({
+        kind: 'human_decision',
+        event: `Recommendation "${rec.title}" expired without a human decision after ${RECOMMENDATION_EXPIRY_MINUTES} simulated minutes.`,
+        recommendationId: rec.id,
+        outcome: 'expired',
+      })
+      return { ...rec, status: 'expired' as const, outcome: 'Expired without a human decision.' }
+    }
+
+    const fnId = rec.oddAssessment?.functionId
+    if (!fnId) return rec
+    const fresh = validateRecommendation({
+      functionId: fnId,
+      snapshot,
+      riskLevel: rec.riskLevel,
+      requiredAuthority: rec.requiredAuthority,
+    })
+    if (fresh.verdict === rec.safetyValidation.verdict) return rec
+
+    pushAudit({
+      kind: 'safety_validation',
+      event: `Safety validation re-assessed for "${rec.title}": ${rec.safetyValidation.verdict.toUpperCase()} -> ${fresh.verdict.toUpperCase()} as operating conditions changed.`,
+      recommendationId: rec.id,
+      safetyValidationResult: fresh.verdict,
+    })
+    const freshOdd = currentOdd.find((o) => o.functionId === fnId)
+    return { ...rec, safetyValidation: fresh, oddAssessment: freshOdd, oddStatus: freshOdd?.status ?? rec.oddStatus }
+  })
+
   return {
     ...prev,
     snapshot,
     targets: targetVessels,
     hazards,
     rawAlarms,
-    recommendations,
-    auditEvents: [...newAuditEvents.reverse(), ...prev.auditEvents],
+    recommendations: revalidated.slice(0, MAX_RECOMMENDATIONS),
+    // toReversed() rather than reverse(): the latter mutates newAuditEvents in place, which is
+    // surprising for any code reading it after this point. Capped to bound session memory.
+    auditEvents: [...[...newAuditEvents].reverse(), ...prev.auditEvents].slice(0, MAX_AUDIT_EVENTS),
     fleet,
     voyagePlan,
     activeScenario,
     scenarioElapsedMinutes: finalScenarioElapsedMinutes,
     scenarioTriggers: finalScenarioTriggers,
     nextIdCounter: idCounter,
+    tickCount,
     telemetryHistory,
     machineryAnalysis,
     ownTrack,

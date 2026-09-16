@@ -71,6 +71,57 @@ export const AUTHORITY_LABELS: Record<RequiredAuthority, string> = {
   shore_safety: 'Shore Safety Support',
 }
 
+/** Every valid RequiredAuthority value, for runtime validation at untyped boundaries. */
+export const REQUIRED_AUTHORITIES: readonly RequiredAuthority[] = [
+  'officer_of_the_watch',
+  'master',
+  'chief_engineer',
+  'technical_superintendent',
+  'marine_superintendent',
+  'safety_specialist',
+  'shore_technical',
+  'shore_marine_ops',
+  'shore_safety',
+] as const
+
+/**
+ * Runtime guard. The type system makes `requiredAuthority` non-optional, so a `Boolean(...)`
+ * check on it is vacuous — it can never fail in typed code and therefore validates nothing.
+ * This guard is the real check: it catches an absent or unrecognised value arriving from an
+ * untyped boundary (adapter JSON, persisted state, a future API), which is the only way the
+ * field can actually be wrong.
+ */
+export function isRequiredAuthority(value: unknown): value is RequiredAuthority {
+  return typeof value === 'string' && (REQUIRED_AUTHORITIES as readonly string[]).includes(value)
+}
+
+/**
+ * Onboard authorities that can authorise an action affecting the vessel. Shore roles are
+ * advisory by design: SHORE-003 requires that shore guidance never removes operational
+ * authority from the vessel, so a shore role can never be the authorising party for a
+ * high-consequence onboard action.
+ */
+const VESSEL_AUTHORITIES: readonly RequiredAuthority[] = ['officer_of_the_watch', 'master', 'chief_engineer'] as const
+
+export function isVesselAuthority(authority: RequiredAuthority): boolean {
+  return (VESSEL_AUTHORITIES as readonly string[]).includes(authority)
+}
+
+/** Seniority ordering used for risk-appropriate authority gating. Shore roles rank 0 — advisory only. */
+export function authorityRank(authority: RequiredAuthority): number {
+  return {
+    shore_technical: 0,
+    shore_marine_ops: 0,
+    shore_safety: 0,
+    technical_superintendent: 0,
+    marine_superintendent: 0,
+    safety_specialist: 0,
+    officer_of_the_watch: 1,
+    chief_engineer: 2,
+    master: 3,
+  }[authority]
+}
+
 export interface Trend {
   /** Chronological samples, oldest first. */
   samples: { t: number; v: number }[]

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useSimulationStore } from '@/store/simulationStore'
 import { Panel } from '@/components/ui/Panel'
 import { RiskBadge, VerdictBadge, Pill, ProvenanceTag, OddStatusBadge } from '@/components/ui/Badge'
+import type { CopilotResponse } from '@/services/adapters/copilotAdapter'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { Tabs } from '@/components/ui/Tabs'
@@ -24,7 +25,7 @@ export function DecisionCentrePage() {
   const { recommendations, decideRecommendation } = state
   const [active, setActive] = useState<Recommendation | null>(null)
   const [comment, setComment] = useState('')
-  const [understanding, setUnderstanding] = useState<string | null>(null)
+  const [understanding, setUnderstanding] = useState<CopilotResponse | null>(null)
 
   const awaiting = recommendations.filter((r) => r.status === 'awaiting_decision')
   const decided = recommendations.filter((r) => r.status !== 'awaiting_decision')
@@ -40,7 +41,7 @@ export function DecisionCentrePage() {
   const askUnderstand = async (rec: Recommendation) => {
     const adapter = resolveCopilotAdapter(state.pocMode)
     const response = await adapter.ask(`Why was "${rec.title}" recommended, in plain terms?`, state)
-    setUnderstanding(response.answer)
+    setUnderstanding(response)
   }
 
   return (
@@ -119,9 +120,29 @@ export function DecisionCentrePage() {
               className="w-full rounded-sm border border-hull-500/40 bg-hull-800 px-2.5 py-2 text-sm text-ink-100"
               placeholder="Optional comment recorded to the audit trail"
             />
+            {active.safetyValidation.verdict === 'blocked' && (
+              <p className="mb-3 rounded-sm border border-critical-500/40 bg-critical-500/10 px-2.5 py-2 text-[11px] text-critical-400">
+                SAFETY VALIDATION BLOCKED — this recommendation is not executable. {active.safetyValidation.reason} It may still be
+                rejected, queried, or escalated to shore.
+              </p>
+            )}
             <div className="mt-3 flex flex-wrap gap-2">
-              <Button variant="success" size="sm" onClick={() => decide('accepted')}>ACCEPT</Button>
-              <Button variant="secondary" size="sm" onClick={() => decide('modified')}>MODIFY</Button>
+              <Button
+                variant="success"
+                size="sm"
+                disabled={active.safetyValidation.verdict === 'blocked'}
+                onClick={() => decide('accepted')}
+              >
+                ACCEPT
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={active.safetyValidation.verdict === 'blocked'}
+                onClick={() => decide('modified')}
+              >
+                MODIFY
+              </Button>
               <Button variant="danger" size="sm" onClick={() => decide('rejected')}>REJECT</Button>
               <Button variant="ghost" size="sm" onClick={() => decide('info_requested')}>REQUEST MORE INFORMATION</Button>
               <Button variant="ghost" size="sm" onClick={() => decide('shore_support_requested')}>REQUEST SHORE SUPPORT</Button>
@@ -150,7 +171,7 @@ function RecommendationCard({ rec, onOpen }: { rec: Recommendation; onOpen: () =
   )
 }
 
-function UnderstandTab({ rec, understanding, onAsk }: { rec: Recommendation; understanding: string | null; onAsk: () => void }) {
+function UnderstandTab({ rec, understanding, onAsk }: { rec: Recommendation; understanding: CopilotResponse | null; onAsk: () => void }) {
   return (
     <div className="flex flex-col gap-3 text-sm">
       <div className="grid grid-cols-2 gap-3 text-xs sm:grid-cols-3">
@@ -179,9 +200,9 @@ function UnderstandTab({ rec, understanding, onAsk }: { rec: Recommendation; und
         </div>
         {understanding && (
           <>
-            <p className="mt-2 text-xs text-ink-200">{understanding}</p>
+            <p className="mt-2 text-xs text-ink-200">{understanding.answer}</p>
             <div className="mt-1.5">
-              <ProvenanceTag provenance="calculated" />
+              <ProvenanceTag provenance={understanding.provenance} />
             </div>
           </>
         )}

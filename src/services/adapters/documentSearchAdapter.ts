@@ -33,10 +33,25 @@ export const simulatedDocumentSearchAdapter: DocumentSearchAdapter = {
   checkStatus: async () => 'simulated',
 }
 
+/** A non-array body previously produced an unhandled rejection at the `.map()` call site. */
+function isDocumentSearchResults(value: unknown): value is DocumentSearchResult[] {
+  if (!Array.isArray(value) || value.length > 50) return false
+  return value.every((item) => {
+    if (typeof item !== 'object' || item === null) return false
+    const c = item as Record<string, unknown>
+    return typeof c.documentTitle === 'string' && typeof c.excerpt === 'string' && c.excerpt.length <= 4000
+  })
+}
+
 export const connectedDocumentSearchAdapter: DocumentSearchAdapter = {
   kind: 'connected',
   search: async (query) => {
-    const result = await attemptConnectedCall<DocumentSearchResult[]>(`${CONNECTED_API_ENDPOINTS.documentSearch}?q=${encodeURIComponent(query)}`)
+    const result = await attemptConnectedCall<DocumentSearchResult[]>(
+      `${CONNECTED_API_ENDPOINTS.documentSearch}?q=${encodeURIComponent(query)}`,
+      undefined,
+      undefined,
+      isDocumentSearchResults,
+    )
     if (result.ok && result.data) return result.data.map((r) => ({ ...r, provenance: 'ai_generated' as const }))
     return simulatedDocumentSearchAdapter.search(query)
   },

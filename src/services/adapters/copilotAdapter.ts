@@ -158,17 +158,39 @@ export const deterministicCopilotAdapter: CopilotAdapter = {
   ask: deterministicAsk,
 }
 
+/**
+ * Runtime shape check for the backend response. Generative text is rendered beside a safety
+ * verdict in the Human Decision Centre, so an unvalidated body is both a render hazard and a
+ * human-factors one. Length is bounded as well as typed: an unbounded answer can push the
+ * operator's actual decision context off screen.
+ */
+const MAX_ANSWER_CHARS = 2000
+const MAX_EVIDENCE_ITEMS = 20
+
+function isCopilotBackendResponse(value: unknown): value is { answer: string; evidence: string[] } {
+  if (typeof value !== 'object' || value === null) return false
+  const candidate = value as { answer?: unknown; evidence?: unknown }
+  if (typeof candidate.answer !== 'string' || candidate.answer.length === 0 || candidate.answer.length > MAX_ANSWER_CHARS) return false
+  if (!Array.isArray(candidate.evidence) || candidate.evidence.length > MAX_EVIDENCE_ITEMS) return false
+  return candidate.evidence.every((item) => typeof item === 'string')
+}
+
 /** Connected POC implementation. Attempts a real generative-AI/RAG backend call; on any failure
  * (expected for the public static demonstration, which has no backend deployed) it falls back to
  * the deterministic adapter and the response is still labelled by its true provenance. */
 export const connectedAICopilotAdapter: CopilotAdapter = {
   kind: 'connected_ai',
   ask: async (question, ctx) => {
-    const result = await attemptConnectedCall<{ answer: string; evidence: string[] }>(CONNECTED_API_ENDPOINTS.copilot, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question, operationalMode: ctx.snapshot.operationalMode, overallHealth: ctx.snapshot.overallHealth }),
-    })
+    const result = await attemptConnectedCall<{ answer: string; evidence: string[] }>(
+      CONNECTED_API_ENDPOINTS.copilot,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question, operationalMode: ctx.snapshot.operationalMode, overallHealth: ctx.snapshot.overallHealth }),
+      },
+      undefined,
+      isCopilotBackendResponse,
+    )
     if (result.ok && result.data) {
       return { answer: result.data.answer, evidence: result.data.evidence, provenance: 'ai_generated' }
     }

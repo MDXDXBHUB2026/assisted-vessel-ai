@@ -6,7 +6,11 @@ import { clamp } from '@/utils/random'
 const NEAR_LIMIT_FRACTION = 0.25
 
 function classify(rawMargin: number): { status: OddStatus; marginFraction: number } {
-  if (rawMargin <= 0) return { status: 'outside', marginFraction: 0 }
+  // A value exactly AT a stated limit satisfies the stated predicate: the UI renders
+  // "Requires >= 2 nm", so visibility of exactly 2.0 nm must not be reported as a violation
+  // of the constraint it literally meets. Strictly below zero is outside; zero is the
+  // boundary case and classifies as near_limit.
+  if (rawMargin < 0) return { status: 'outside', marginFraction: 0 }
   if (rawMargin < NEAR_LIMIT_FRACTION) return { status: 'near_limit', marginFraction: clamp(rawMargin, 0, 1) }
   return { status: 'inside', marginFraction: clamp(rawMargin, 0, 1) }
 }
@@ -81,8 +85,14 @@ export function assessOdd(functionId: string, snapshot: VesselSnapshot): OddAsse
 
   const status: OddStatus = limitingFactors.length > 0 ? 'outside' : nearLimitFactors.length > 0 ? 'near_limit' : 'inside'
 
-  let availableAssistanceLevel: AssistanceLevel = fn.configuredAssistanceLevel
+  // The declared ceiling is enforced here, not merely documented. `maxAssistanceLevel` is
+  // specified as "may never exceed, regardless of conditions", so it clamps the configured
+  // level before any condition-based reduction is applied.
+  let availableAssistanceLevel: AssistanceLevel = minAssistanceLevel(fn.configuredAssistanceLevel, fn.maxAssistanceLevel)
   let assistanceLimitingReason: string | undefined
+  if (assistanceLevelRank(fn.configuredAssistanceLevel) > assistanceLevelRank(fn.maxAssistanceLevel)) {
+    assistanceLimitingReason = `Configured level ${fn.configuredAssistanceLevel} exceeds the declared ceiling ${fn.maxAssistanceLevel} for this function — clamped to the ceiling.`
+  }
 
   if (!modeAllowed) {
     availableAssistanceLevel = 'L0'
@@ -98,6 +108,8 @@ export function assessOdd(functionId: string, snapshot: VesselSnapshot): OddAsse
   return {
     functionId: fn.id,
     functionLabel: fn.label,
+    maxAssistanceLevel: fn.maxAssistanceLevel,
+    requiredSourceAreas: fn.requiredSourceAreas,
     status,
     limitingFactors,
     nearLimitFactors,

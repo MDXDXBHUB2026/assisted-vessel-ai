@@ -9,7 +9,8 @@ export const TRACEABILITY_ROWS: TraceabilityRow[] = [
     hazardOrConstraint: 'HAZ-ME-01 Unplanned main engine derating',
     component: 'safety-engine/validate.ts, decision-engine/builders.ts',
     testScenario: 'ENGINE DEGRADATION',
-    verificationEvidence: 'Unit test: safety-engine/validate.test.ts · Live: Assurance → Requirements & Verification',
+    verificationEvidence: 'Unit test: src/safety-engine/validate.test.ts · Unit test: src/simulation/engine.scenarios.test.ts (full sense-to-audit chain)',
+    verificationStatus: 'verified',
   },
   {
     businessObjective: 'BUS-002 Reduce workload, preserve authority',
@@ -19,7 +20,8 @@ export const TRACEABILITY_ROWS: TraceabilityRow[] = [
     hazardOrConstraint: 'HAZ-OPS-02 Alarm flooding masking the underlying cause',
     component: 'decision-engine/alarmCorrelation.ts',
     testScenario: 'ALARM CASCADE',
-    verificationEvidence: 'Unit test: decision-engine/alarmCorrelation.test.ts',
+    verificationEvidence: 'Unit test: src/decision-engine/alarmCorrelation.test.ts',
+    verificationStatus: 'verified',
   },
   {
     businessObjective: 'BUS-002 Reduce workload, preserve authority',
@@ -29,7 +31,8 @@ export const TRACEABILITY_ROWS: TraceabilityRow[] = [
     hazardOrConstraint: 'HAZ-NAV-01 Loss of situational awareness under closing risk',
     component: 'simulation/navigation.ts, features/operations/*',
     testScenario: 'COLLISION-RISK DEVELOPMENT',
-    verificationEvidence: 'Unit test: utils/geo.test.ts (CPA/TCPA) · e2e: collision-risk.spec.ts',
+    verificationEvidence: 'Unit test: src/utils/geo.test.ts (CPA/TCPA geometry) · e2e: e2e/acceptance-journey.spec.ts ("CPA develops progressively without any autonomous course change")',
+    verificationStatus: 'verified',
   },
   {
     businessObjective: 'BUS-002 Reduce workload, preserve authority',
@@ -39,7 +42,8 @@ export const TRACEABILITY_ROWS: TraceabilityRow[] = [
     hazardOrConstraint: 'HAZ-CGO-01 Temperature-sensitive cargo loss',
     component: 'simulation/engine.ts (reefer branch), features/cargo/*',
     testScenario: 'REEFER TEMPERATURE EXCURSION',
-    verificationEvidence: 'e2e: reefer-excursion.spec.ts',
+    verificationEvidence: 'Unit test: src/simulation/engine.scenarios.test.ts ("REEFER TEMPERATURE EXCURSION scenario") · No e2e coverage yet',
+    verificationStatus: 'partial',
   },
   {
     businessObjective: 'BUS-001 Demonstrate the decision chain',
@@ -49,7 +53,8 @@ export const TRACEABILITY_ROWS: TraceabilityRow[] = [
     hazardOrConstraint: 'HAZ-NAV-02 Reliance on degraded position data',
     component: 'safety-engine/oddEngine.ts',
     testScenario: 'GNSS / SENSOR DEGRADATION',
-    verificationEvidence: 'Unit test: safety-engine/validate.test.ts · e2e: gnss-degradation.spec.ts',
+    verificationEvidence: 'Unit test: src/simulation/engine.scenarios.test.ts ("GNSS / SENSOR DEGRADATION scenario — ODD violation") · No e2e coverage yet',
+    verificationStatus: 'partial',
   },
   {
     businessObjective: 'BUS-001 Demonstrate the decision chain',
@@ -59,7 +64,8 @@ export const TRACEABILITY_ROWS: TraceabilityRow[] = [
     hazardOrConstraint: 'HAZ-OPS-03 Over-reliance on shore-dependent capability',
     component: 'simulation/engine.ts (fallback_transition), features/operations/*',
     testScenario: 'SHIP-SHORE COMMUNICATION LOSS',
-    verificationEvidence: 'e2e: communication-loss.spec.ts',
+    verificationEvidence: 'e2e: e2e/acceptance-journey.spec.ts ("shore-dependent capability falls back while onboard assistance continues, then recovers") · Unit test: src/simulation/engine.scenarios.test.ts',
+    verificationStatus: 'verified',
   },
   {
     businessObjective: 'BUS-002 Reduce workload, preserve authority',
@@ -69,7 +75,8 @@ export const TRACEABILITY_ROWS: TraceabilityRow[] = [
     hazardOrConstraint: 'HAZ-OPS-04 Unintended speed change without human authorisation',
     component: 'store/simulationStore.ts (acceptVoyageRecommendation)',
     testScenario: 'EXCESSIVE FUEL CONSUMPTION',
-    verificationEvidence: 'e2e: human-acceptance.spec.ts',
+    verificationEvidence: 'e2e: e2e/acceptance-journey.spec.ts ("sense → detect → correlate → recommend → safety validate → human accepts → audit") · Unit test: src/store/simulationStore.test.ts',
+    verificationStatus: 'verified',
   },
   {
     businessObjective: 'BUS-001 Demonstrate the decision chain',
@@ -79,7 +86,8 @@ export const TRACEABILITY_ROWS: TraceabilityRow[] = [
     hazardOrConstraint: 'HAZ-SAF-01 Automatic execution of a high-risk action',
     component: 'safety-engine/validate.ts',
     testScenario: 'SAFETY EVENT (severe risk, no authority)',
-    verificationEvidence: 'Unit test: safety-engine/validate.test.ts (blocks severe risk without master/chief engineer authority) · e2e: blocked-recommendation.spec.ts',
+    verificationEvidence: 'Unit test: src/safety-engine/validate.test.ts (BLOCKED reachability and gating) · Unit test: src/store/simulationStore.test.ts (a BLOCKED recommendation cannot be accepted or modified) · No e2e coverage yet',
+    verificationStatus: 'partial',
   },
   {
     businessObjective: 'BUS-002 Reduce workload, preserve authority',
@@ -89,7 +97,8 @@ export const TRACEABILITY_ROWS: TraceabilityRow[] = [
     hazardOrConstraint: 'HAZ-OPS-05 Silent disregard of a safety-relevant recommendation',
     component: 'features/decision/*, store/simulationStore.ts',
     testScenario: 'ENGINE DEGRADATION (human rejects)',
-    verificationEvidence: 'e2e: human-rejection.spec.ts',
+    verificationEvidence: 'e2e: e2e/acceptance-journey.spec.ts ("a rejected recommendation is recorded distinctly from acceptance") · Unit test: src/store/simulationStore.test.ts',
+    verificationStatus: 'verified',
   },
   {
     businessObjective: 'BUS-003 Engineering narrative',
@@ -99,7 +108,8 @@ export const TRACEABILITY_ROWS: TraceabilityRow[] = [
     hazardOrConstraint: 'HAZ-OPS-06 Ambiguity over who holds decision authority',
     component: 'features/shore/*, store/simulationStore.ts',
     testScenario: 'Any scenario → Request Shore Support',
-    verificationEvidence: 'e2e: shore-support-request.spec.ts',
+    verificationEvidence: 'e2e: e2e/acceptance-journey.spec.ts ("requesting shore support opens a traceable case in the Shore Operations Centre") · Unit test: src/store/simulationStore.test.ts',
+    verificationStatus: 'verified',
   },
   {
     businessObjective: 'BUS-004 Independent, self-contained',
@@ -109,6 +119,7 @@ export const TRACEABILITY_ROWS: TraceabilityRow[] = [
     hazardOrConstraint: 'HAZ-DAT-01 Synthetic data mistaken for live data',
     component: 'services/adapters/*, services/pocMode.ts',
     testScenario: 'Connected mode with unreachable backend (default for the public static demo)',
-    verificationEvidence: 'Manual: POC Data Mode banner shows SIMULATED with reason',
+    verificationEvidence: 'Manual review only: POC Data Mode banner shows SIMULATED with reason. Not covered by an automated test.',
+    verificationStatus: 'not_verified',
   },
 ]

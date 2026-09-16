@@ -77,7 +77,7 @@ export function VoyagePage() {
               <Button size="sm" variant="secondary" onClick={() => setVoyageSpeed(null)}>
                 RESET TO RECOMMENDED
               </Button>
-              <Button size="sm" variant="success" onClick={acceptVoyageRecommendation} disabled={voyagePlan.recommendationAccepted}>
+              <Button size="sm" variant="success" onClick={() => acceptVoyageRecommendation('master')} disabled={voyagePlan.recommendationAccepted}>
                 {voyagePlan.recommendationAccepted ? 'ACCEPTED' : 'ACCEPT RECOMMENDATION'}
               </Button>
             </div>

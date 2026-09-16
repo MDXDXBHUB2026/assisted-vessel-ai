@@ -7,7 +7,32 @@ import type { PocExecutionMode } from '@/types'
  * back to its offline/simulated implementation and the UI reports this honestly rather than
  * disguising synthetic data as live.
  */
-export const CONNECTED_API_BASE_URL: string = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '/api'
+const DEFAULT_API_BASE_URL = '/api'
+
+/**
+ * Resolve the connected-POC base URL, constrained at module load.
+ *
+ * This is a build-time value baked into the bundle, so an end user cannot redirect a deployed
+ * build. The realistic risk is a build-time misconfiguration or a compromised CI environment
+ * pointing it at an arbitrary host — after which every human decision, including the free-text
+ * comment an officer typed, would be POSTed there. A relative path is always safe; an absolute
+ * URL must be HTTPS. Anything else falls back to the default rather than being trusted.
+ */
+function resolveApiBaseUrl(): string {
+  const configured = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim()
+  if (!configured) return DEFAULT_API_BASE_URL
+  // Relative path — same origin, always acceptable.
+  if (configured.startsWith('/') && !configured.startsWith('//')) return configured.replace(/\/+$/, '')
+  try {
+    const parsed = new URL(configured)
+    if (parsed.protocol !== 'https:') return DEFAULT_API_BASE_URL
+    return configured.replace(/\/+$/, '')
+  } catch {
+    return DEFAULT_API_BASE_URL
+  }
+}
+
+export const CONNECTED_API_BASE_URL: string = resolveApiBaseUrl()
 
 export const CONNECTED_API_ENDPOINTS = {
   telemetry: `${CONNECTED_API_BASE_URL}/telemetry`,

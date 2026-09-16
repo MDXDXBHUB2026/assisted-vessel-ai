@@ -34,10 +34,34 @@ export const demoWeatherAdapter: WeatherAdapter = {
   checkStatus: async () => 'simulated',
 }
 
+/**
+ * Weather values feed `snapshot.environment`, which the ODD engine reads for its visibility and
+ * wave-height envelope checks. This is the one adapter whose data could otherwise move a
+ * function from OUTSIDE to INSIDE the envelope and flip a verdict, so every field is both
+ * type-checked and range-checked here. An implausible reading is a broken sensor, not an
+ * extreme-but-valid measurement, and is rejected rather than trusted.
+ */
+function isWeatherReading(value: unknown): value is WeatherReading {
+  if (typeof value !== 'object' || value === null) return false
+  const c = value as Record<string, unknown>
+  const inRange = (v: unknown, min: number, max: number) => typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max
+  return (
+    inRange(c.windSpeedKn, 0, 200) &&
+    inRange(c.waveHeightM, 0, 30) &&
+    inRange(c.visibilityNm, 0, 50) &&
+    inRange(c.seaState, 0, 9)
+  )
+}
+
 export const connectedWeatherAdapter: WeatherAdapter = {
   kind: 'connected',
   getCurrentConditions: async (snapshot) => {
-    const result = await attemptConnectedCall<WeatherReading>(`${CONNECTED_API_ENDPOINTS.weather}?lat=${snapshot.navigation.position.latitude}&lon=${snapshot.navigation.position.longitude}`)
+    const result = await attemptConnectedCall<WeatherReading>(
+      `${CONNECTED_API_ENDPOINTS.weather}?lat=${snapshot.navigation.position.latitude}&lon=${snapshot.navigation.position.longitude}`,
+      undefined,
+      undefined,
+      isWeatherReading,
+    )
     if (result.ok && result.data) return { ...result.data, source: 'connected' }
     return demoWeatherAdapter.getCurrentConditions(snapshot)
   },

@@ -45,3 +45,29 @@ A small number of explicitly named technologies were substituted for lighter alt
 19. **No React Three Fiber / Three.js 3D Digital Twin.** The Digital Twin is a 2D functional-system topology (`VesselTopology`) showing the eight monitored system areas and their power/monitoring relationships, with click-through condition/trend/evidence detail. A full 3D vessel model was judged to add rendering-pipeline risk and build time disproportionate to its incremental value over a clear, fast, accessible 2D topology for this POC.
 20. **Apache ECharts** is used for genuine streaming engineering telemetry (`StreamingChart`) where the brief specifically asked for it; the existing lightweight Recharts-based `Sparkline` is retained for a few small in-context trend indicators. Standardising on a single charting library is a reasonable follow-up cleanup, noted as a remaining item.
 21. Machinery and voyage models remain the illustrative approximations described in item 5 above — ECharts and the new multivariate (cylinder-spread) signal change how the analytics are *computed and displayed* (rolling history, slope, persistence, spread), not the fact that they are synthetic, uncalibrated models.
+
+## Security and accountability boundaries
+
+22. **The authority model is labelling, not enforcement.** There is no authenticated identity, no
+    session and no server-side authorisation check. `requiredAuthority` records which role *should*
+    decide; nothing verifies that whoever clicked holds it. The audit trail therefore demonstrates
+    the *shape* of an accountability record without providing its evidentiary value. This is
+    appropriate for a browser-only demonstrator with synthetic data, and is stated here so the
+    audit trail is never mistaken for more than it is.
+23. **The audit trail is session-lifetime and not tamper-evident.** It lives in client memory, a
+    refresh clears it, and nothing prevents it being rewritten. A production realisation would
+    need an append-only, hash-chained or WORM record authored server-side from an authenticated
+    session — see `docs/production-architecture-assessment.md`.
+24. **No clickjacking protection on this deployment.** A Content-Security-Policy is set via
+    `<meta>` in `index.html`, but `frame-ancestors` is ignored in meta form and requires a real
+    response header. GitHub Pages cannot set response headers, so this specific protection is
+    absent rather than covered.
+25. **`worker-src blob:` is required by the CSP.** The simulation clock runs in a Web Worker
+    created from a Blob URL to escape background-tab timer throttling. A policy omitting that
+    directive silently freezes the simulated clock: a blocked worker constructs without throwing
+    and simply never posts a message. A watchdog in `useSimulationLoop.ts` now falls back to
+    `setInterval` if no tick arrives, so the console degrades visibly rather than silently.
+26. **Connected-mode responses are validated but not authenticated.** Adapter responses are
+    runtime-validated and range-checked before use, and a failed validation is treated as a
+    network failure. There is still no transport authentication or integrity protection — a
+    production realisation would authenticate backend-to-backend, never from the browser.

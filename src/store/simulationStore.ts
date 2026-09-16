@@ -1,8 +1,10 @@
 import { create } from 'zustand'
 import type { OperationalMode, PocExecutionMode, RequiredAuthority, ScenarioId, ShoreCase, ShoreFunction } from '@/types'
-import { OPERATIONAL_MODE_LABELS } from '@/types'
+import { assistanceLevelRank, OPERATIONAL_MODE_LABELS } from '@/types'
 import { buildInitialSimulationState, type AdapterStatuses, type SimulationState } from '@/simulation/state'
 import { tick } from '@/simulation/engine'
+import { validateRecommendation } from '@/safety-engine/validate'
+import { assessOdd } from '@/safety-engine/oddEngine'
 import { DEMO_VOYAGE_PHASES } from '@/simulation/demoVoyage'
 import { readStoredPocMode, writeStoredPocMode } from '@/services/pocMode'
 import { resolveTelemetryAdapter } from '@/services/adapters/telemetryAdapter'
@@ -14,6 +16,18 @@ import { connectedShoreCaseAdapter } from '@/services/adapters/shoreCaseAdapter'
 
 export const BASE_DT_MINUTES_PER_SECOND = 0.5
 
+/**
+ * One ID authority for the whole application. Store actions previously minted audit IDs from
+ * `Date.now()` while the engine used a monotonic counter — two schemes and two clocks in a
+ * single supposedly-immutable ledger, with `AUD-CASE-` shared between two different actions so
+ * a create and an update in the same millisecond collided outright.
+ */
+let probeGeneration = 0
+
+function mintId(prefix: string, counter: number): string {
+  return `${prefix}-${String(counter).padStart(6, '0')}`
+}
+
 interface SimulationStore extends SimulationState {
   stepIfPlaying: (elapsedSeconds: number) => void
   play: () => void
@@ -23,7 +37,7 @@ interface SimulationStore extends SimulationState {
   setScenario: (scenario: ScenarioId) => void
   setOperationalMode: (mode: OperationalMode) => void
   setVoyageSpeed: (speedKn: number | null) => void
-  acceptVoyageRecommendation: () => void
+  acceptVoyageRecommendation: (role?: RequiredAuthority) => void
 
   setPocMode: (mode: PocExecutionMode) => void
   probeConnectedAdapters: () => Promise<void>
@@ -62,15 +76,19 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
   setSpeed: (multiplier) => set({ speedMultiplier: multiplier }),
 
   resetEnvironment: () => {
-    const fresh = buildInitialSimulationState()
+    // Continue the ID sequence. RESET ENVIRONMENT deliberately retains the prior audit trail, so
+    // restarting the counter would mint IDs colliding with records already in it.
+    const carried = get().nextIdCounter
+    const fresh = buildInitialSimulationState(carried + 1, get().nextShoreCaseNumber)
     const prevAudit = get().auditEvents
     const pocMode = get().pocMode
     set({
       ...fresh,
       pocMode,
+      nextIdCounter: fresh.nextIdCounter + 1,
       auditEvents: [
         {
-          id: `AUD-RESET-${Date.now()}`,
+          id: mintId('AUD', fresh.nextIdCounter + 1),
           timestampIso: fresh.snapshot.simTimeIso,
           operatingMode: OPERATIONAL_MODE_LABELS[fresh.snapshot.operationalMode],
           scenarioId: null,
@@ -86,8 +104,10 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
 
   startDemoVoyage: () => {
     const state = get()
+    const auditId = state.nextIdCounter + 1
     const first = DEMO_VOYAGE_PHASES[0]!
     set({
+      nextIdCounter: auditId,
       activeScenario: first.scenario,
       scenarioElapsedMinutes: 0,
       scenarioTriggers: {},
@@ -95,7 +115,7 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
       isPlaying: true,
       auditEvents: [
         {
-          id: `AUD-DEMO-${Date.now()}`,
+          id: mintId('AUD', auditId),
           timestampIso: state.snapshot.simTimeIso,
           operatingMode: OPERATIONAL_MODE_LABELS[state.snapshot.operationalMode],
           scenarioId: first.scenario,
@@ -110,16 +130,18 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
 
   skipToPhase: (index) => {
     const state = get()
+    const auditId = state.nextIdCounter + 1
     const phase = DEMO_VOYAGE_PHASES[index]
     if (!phase) return
     set({
+      nextIdCounter: auditId,
       activeScenario: phase.scenario,
       scenarioElapsedMinutes: 0,
       scenarioTriggers: {},
       demoVoyage: { active: true, phaseIndex: index, phaseElapsedMinutes: 0 },
       auditEvents: [
         {
-          id: `AUD-DEMO-${Date.now()}`,
+          id: mintId('AUD', auditId),
           timestampIso: state.snapshot.simTimeIso,
           operatingMode: OPERATIONAL_MODE_LABELS[state.snapshot.operationalMode],
           scenarioId: phase.scenario,
@@ -139,14 +161,16 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
 
   setScenario: (scenario) => {
     const state = get()
+    const auditId = state.nextIdCounter + 1
     set({
+      nextIdCounter: auditId,
       activeScenario: scenario,
       scenarioElapsedMinutes: 0,
       scenarioTriggers: {},
       demoVoyage: { ...state.demoVoyage, active: false },
       auditEvents: [
         {
-          id: `AUD-SCN-${Date.now()}`,
+          id: mintId('AUD', auditId),
           timestampIso: state.snapshot.simTimeIso,
           operatingMode: OPERATIONAL_MODE_LABELS[state.snapshot.operationalMode],
           scenarioId: scenario === 'normal_operations' ? null : scenario,
@@ -161,11 +185,13 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
 
   setOperationalMode: (mode) => {
     const state = get()
+    const auditId = state.nextIdCounter + 1
     set({
+      nextIdCounter: auditId,
       snapshot: { ...state.snapshot, operationalMode: mode },
       auditEvents: [
         {
-          id: `AUD-MODE-${Date.now()}`,
+          id: mintId('AUD', auditId),
           timestampIso: state.snapshot.simTimeIso,
           operatingMode: OPERATIONAL_MODE_LABELS[mode],
           scenarioId: state.activeScenario === 'normal_operations' ? null : state.activeScenario,
@@ -198,20 +224,69 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
     })
   },
 
-  acceptVoyageRecommendation: () => {
+  /**
+   * The ONLY action in the application that actually changes vessel behaviour: the adopted speed
+   * becomes the commanded speed in the simulation engine. It must therefore pass the same safety
+   * validation as any other recommendation — previously it called neither `validateRecommendation`
+   * nor `assessOdd`, did not check operational mode, and wrote an audit event hardcoding
+   * "Master accepted ... L3 supervised execution" regardless of conditions or of who clicked.
+   */
+  acceptVoyageRecommendation: (role = 'master') => {
     const state = get()
+    const auditId = state.nextIdCounter + 1
+    const functionId = 'voyage_speed_optimisation'
+    const odd = assessOdd(functionId, state.snapshot)
+    const validation = validateRecommendation({
+      functionId,
+      snapshot: state.snapshot,
+      riskLevel: 'medium',
+      requiredAuthority: role,
+    })
+
+    const belowL3 = assistanceLevelRank(odd.availableAssistanceLevel) < assistanceLevelRank('L3')
+    const refusedReason =
+      validation.verdict === 'blocked'
+        ? validation.reason ?? 'Safety validation blocked this action.'
+        : belowL3
+          ? `Supervised execution requires L3; only ${odd.availableAssistanceLevel} is available (${odd.assistanceLimitingReason ?? 'conditions outside the operational envelope'}).`
+          : undefined
+
+    if (refusedReason) {
+      set({
+        nextIdCounter: auditId,
+        auditEvents: [
+          {
+            id: mintId('AUD', auditId),
+            timestampIso: state.snapshot.simTimeIso,
+            operatingMode: OPERATIONAL_MODE_LABELS[state.snapshot.operationalMode],
+            scenarioId: state.activeScenario === 'normal_operations' ? null : state.activeScenario,
+            kind: 'safety_validation',
+            event: `Voyage speed adoption REFUSED by the safety layer: ${refusedReason}`,
+            humanDecision: 'rejected',
+            responsibleRole: role,
+            safetyValidationResult: validation.verdict,
+            outcome: 'Refused — speed profile not applied',
+          },
+          ...state.auditEvents,
+        ],
+      })
+      return
+    }
+
     set({
+      nextIdCounter: auditId,
       voyagePlan: { ...state.voyagePlan, recommendationAccepted: true, userModifiedSpeedKn: state.voyagePlan.recommendedSpeedKn },
       auditEvents: [
         {
-          id: `AUD-VOY-${Date.now()}`,
+          id: mintId('AUD', auditId),
           timestampIso: state.snapshot.simTimeIso,
           operatingMode: OPERATIONAL_MODE_LABELS[state.snapshot.operationalMode],
           scenarioId: state.activeScenario === 'normal_operations' ? null : state.activeScenario,
           kind: 'human_decision',
-          event: 'Master accepted recommended voyage speed profile — L3 supervised execution: speed profile applied following explicit authorisation.',
+          event: `${role.replace(/_/g, ' ')} authorised the recommended voyage speed profile — L3 supervised execution (safety validation ${validation.verdict.toUpperCase()}, assistance level ${odd.availableAssistanceLevel}).`,
           humanDecision: 'accepted',
-          responsibleRole: 'master',
+          responsibleRole: role,
+          safetyValidationResult: validation.verdict,
           outcome: 'Recommended speed adopted',
         },
         ...state.auditEvents,
@@ -222,14 +297,16 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
   setPocMode: (mode) => {
     writeStoredPocMode(mode)
     const state = get()
+    const auditId = state.nextIdCounter + 1
     set({
+      nextIdCounter: auditId,
       pocMode: mode,
       adapterStatuses: mode === 'offline'
         ? { telemetry: 'simulated', weather: 'simulated', copilot: 'simulated', documents: 'simulated', systemHealthApi: 'simulated', audit: 'simulated', shoreCases: 'simulated' }
         : { ...state.adapterStatuses, telemetry: 'connecting', weather: 'connecting', copilot: 'connecting', documents: 'connecting', systemHealthApi: 'connecting', audit: 'connecting', shoreCases: 'connecting' },
       auditEvents: [
         {
-          id: `AUD-POC-${Date.now()}`,
+          id: mintId('AUD', auditId),
           timestampIso: state.snapshot.simTimeIso,
           operatingMode: OPERATIONAL_MODE_LABELS[state.snapshot.operationalMode],
           scenarioId: null,
@@ -246,6 +323,11 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
   probeConnectedAdapters: async () => {
     const state = get()
     if (state.pocMode !== 'connected') return
+    // Two probes can be in flight at once (setPocMode then resetEnvironment). Without a
+    // generation guard, whichever resolves LAST wins — and with a 2.5s adapter timeout that is
+    // frequently the older, slower one, so a stale result silently overwrites a newer one.
+    probeGeneration += 1
+    const generation = probeGeneration
     const [telemetry, weather, systemHealthApi, documents] = await Promise.all([
       resolveTelemetryAdapter('connected').checkStatus(),
       resolveWeatherAdapter('connected').checkStatus(),
@@ -261,14 +343,42 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
       audit: systemHealthApi === 'connected' ? 'connected' : 'unavailable_fallback',
       shoreCases: systemHealthApi === 'connected' ? 'connected' : 'unavailable_fallback',
     }
-    // Only apply if still in connected mode (user may have switched back to offline meanwhile).
-    if (get().pocMode === 'connected') set({ adapterStatuses: next })
+    // Apply only if still in connected mode AND this is still the newest probe.
+    if (get().pocMode === 'connected' && generation === probeGeneration) set({ adapterStatuses: next })
   },
 
   decideRecommendation: (id, decision, comment, role) => {
     const state = get()
+    const auditId = state.nextIdCounter + 1
     const rec = state.recommendations.find((r) => r.id === id)
     if (!rec) return
+
+    // SAFE-003: a BLOCKED recommendation is never executable. Rejecting it, asking for more
+    // information, or escalating to shore all remain available — only acting on it does not.
+    // The refused attempt is itself recorded: an operator trying to action a blocked
+    // recommendation is exactly the event an audit trail exists to capture.
+    if (rec.safetyValidation.verdict === 'blocked' && (decision === 'accepted' || decision === 'modified')) {
+      set({
+        nextIdCounter: auditId,
+        auditEvents: [
+          {
+            id: mintId('AUD', auditId),
+            timestampIso: state.snapshot.simTimeIso,
+            operatingMode: OPERATIONAL_MODE_LABELS[state.snapshot.operationalMode],
+            scenarioId: state.activeScenario === 'normal_operations' ? null : state.activeScenario,
+            kind: 'safety_validation',
+            event: `Attempt to ${decision === 'accepted' ? 'accept' : 'modify'} a BLOCKED recommendation "${rec.title}" was refused by the safety layer.`,
+            recommendationId: id,
+            responsibleRole: role,
+            safetyValidationResult: 'blocked',
+            outcome: 'Refused — recommendation is not executable',
+          },
+          ...state.auditEvents,
+        ],
+      })
+      return
+    }
+
     const outcome =
       decision === 'accepted'
         ? 'Recommendation accepted and actioned by human authority.'
@@ -281,6 +391,7 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
               : 'Shore support requested for this recommendation.'
 
     set({
+      nextIdCounter: auditId,
       recommendations: state.recommendations.map((r) =>
         r.id === id
           ? {
@@ -295,7 +406,7 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
       ),
       auditEvents: [
         {
-          id: `AUD-DEC-${Date.now()}`,
+          id: mintId('AUD', auditId),
           timestampIso: state.snapshot.simTimeIso,
           operatingMode: OPERATIONAL_MODE_LABELS[state.snapshot.operationalMode],
           scenarioId: state.activeScenario === 'normal_operations' ? null : state.activeScenario,
@@ -340,13 +451,15 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
 
   updateHazardStatus: (id, status, note) => {
     const state = get()
+    const auditId = state.nextIdCounter + 1
     const hazard = state.hazards.find((h) => h.id === id)
     if (!hazard) return
     set({
+      nextIdCounter: auditId,
       hazards: state.hazards.map((h) => (h.id === id ? { ...h, status } : h)),
       auditEvents: [
         {
-          id: `AUD-HAZ-${Date.now()}`,
+          id: mintId('AUD', auditId),
           timestampIso: state.snapshot.simTimeIso,
           operatingMode: OPERATIONAL_MODE_LABELS[state.snapshot.operationalMode],
           scenarioId: state.activeScenario === 'normal_operations' ? null : state.activeScenario,
@@ -361,7 +474,11 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
 
   createShoreCase: (input) => {
     const state = get()
-    const id = `CASE-${String(state.shoreCases.length + 1).padStart(4, '0')}`
+    const auditId = state.nextIdCounter + 1
+    // Counter-derived, not `shoreCases.length + 1`, which restarts at CASE-0001 after a reset
+    // and silently reuses an ID already referenced by retained audit records.
+    const caseNumber = state.nextShoreCaseNumber
+    const id = `CASE-${String(caseNumber).padStart(4, '0')}`
     const newCase: ShoreCase = {
       id,
       vesselId: input.vesselId,
@@ -375,10 +492,12 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
       recommendationId: input.recommendationId,
     }
     set({
+      nextIdCounter: auditId,
+      nextShoreCaseNumber: caseNumber + 1,
       shoreCases: [newCase, ...state.shoreCases],
       auditEvents: [
         {
-          id: `AUD-CASE-${Date.now()}`,
+          id: mintId('AUD', auditId),
           timestampIso: state.snapshot.simTimeIso,
           operatingMode: OPERATIONAL_MODE_LABELS[state.snapshot.operationalMode],
           scenarioId: state.activeScenario === 'normal_operations' ? null : state.activeScenario,
@@ -394,14 +513,16 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
 
   updateShoreCase: (id, status, guidanceNotes) => {
     const state = get()
+    const auditId = state.nextIdCounter + 1
     const shoreCase = state.shoreCases.find((c) => c.id === id)
     if (!shoreCase) return
     const updated = { ...shoreCase, status, guidanceNotes: guidanceNotes ?? shoreCase.guidanceNotes }
     set({
+      nextIdCounter: auditId,
       shoreCases: state.shoreCases.map((c) => (c.id === id ? updated : c)),
       auditEvents: [
         {
-          id: `AUD-CASE-${Date.now()}`,
+          id: mintId('AUD', auditId),
           timestampIso: state.snapshot.simTimeIso,
           operatingMode: OPERATIONAL_MODE_LABELS[state.snapshot.operationalMode],
           scenarioId: state.activeScenario === 'normal_operations' ? null : state.activeScenario,
@@ -417,10 +538,12 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
 
   logAudit: (event, kind = 'mode_change') => {
     const state = get()
+    const auditId = state.nextIdCounter + 1
     set({
+      nextIdCounter: auditId,
       auditEvents: [
         {
-          id: `AUD-LOG-${Date.now()}`,
+          id: mintId('AUD', auditId),
           timestampIso: state.snapshot.simTimeIso,
           operatingMode: OPERATIONAL_MODE_LABELS[state.snapshot.operationalMode],
           scenarioId: state.activeScenario === 'normal_operations' ? null : state.activeScenario,

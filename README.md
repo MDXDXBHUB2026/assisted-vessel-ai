@@ -36,6 +36,7 @@ Then open the printed local URL and click **ENTER BRIDGE OPERATIONS**, or **STAR
 | `npm run test` | Run the unit test suite (Vitest) |
 | `npm run test:e2e` | Run the Playwright end-to-end acceptance-journey suite (builds/serves first via `npm run preview`) |
 | `npm run lint` | Run oxlint |
+| `npm run verify` | Lint, type-check and unit tests in one command (what CI runs) |
 
 ## Documentation
 
@@ -46,6 +47,8 @@ Then open the printed local URL and click **ENTER BRIDGE OPERATIONS**, or **STAR
 - [Concept of Operations](docs/conops.md)
 - [Assumptions](docs/assumptions.md)
 - [Requirements Traceability](docs/requirements-traceability.md)
+- [V4 Assurance Review and Remediation](docs/v4-assurance-review.md)
+- [Production Architecture Assessment](docs/production-architecture-assessment.md)
 
 ## Deploying to GitHub Pages
 

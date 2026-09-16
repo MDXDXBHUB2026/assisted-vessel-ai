@@ -1,4 +1,4 @@
-import type { AssistanceLevel, OperationalMode } from '@/types'
+import type { AssistanceLevel, OperationalMode, VesselSystemArea } from '@/types'
 
 export interface AssistedFunctionDefinition {
   id: string
@@ -18,6 +18,14 @@ export interface AssistedFunctionDefinition {
   configuredAssistanceLevel: AssistanceLevel
   /** Ceiling this function may never exceed, regardless of conditions — L4 is never reached for any function in this POC. */
   maxAssistanceLevel: AssistanceLevel
+  /**
+   * The vessel system areas this function actually depends on for its source data. The safety
+   * engine checks availability against THESE areas. Previously every non-machinery function was
+   * checked against `navigation`, so (for example) a shore-sync recommendation reported
+   * "source system availability confirmed — all navigation sensors nominal" while the satellite
+   * link was down.
+   */
+  requiredSourceAreas: VesselSystemArea[]
 }
 
 export const ASSISTED_FUNCTIONS: AssistedFunctionDefinition[] = [
@@ -37,6 +45,7 @@ export const ASSISTED_FUNCTIONS: AssistedFunctionDefinition[] = [
     maxDataLatencySec: 5,
     configuredAssistanceLevel: 'L2',
     maxAssistanceLevel: 'L2',
+    requiredSourceAreas: ['navigation'],
   },
   {
     id: 'voyage_speed_optimisation',
@@ -54,6 +63,7 @@ export const ASSISTED_FUNCTIONS: AssistedFunctionDefinition[] = [
     maxDataLatencySec: 30,
     configuredAssistanceLevel: 'L3',
     maxAssistanceLevel: 'L3',
+    requiredSourceAreas: ['navigation', 'fuel_energy', 'main_engine'],
   },
   {
     id: 'machinery_anomaly_detection',
@@ -71,6 +81,7 @@ export const ASSISTED_FUNCTIONS: AssistedFunctionDefinition[] = [
     maxDataLatencySec: 15,
     configuredAssistanceLevel: 'L2',
     maxAssistanceLevel: 'L2',
+    requiredSourceAreas: ['main_engine'],
   },
   {
     id: 'predictive_maintenance',
@@ -88,6 +99,7 @@ export const ASSISTED_FUNCTIONS: AssistedFunctionDefinition[] = [
     maxDataLatencySec: 3600,
     configuredAssistanceLevel: 'L2',
     maxAssistanceLevel: 'L2',
+    requiredSourceAreas: ['main_engine', 'auxiliary_machinery'],
   },
   {
     id: 'reefer_monitoring',
@@ -105,6 +117,7 @@ export const ASSISTED_FUNCTIONS: AssistedFunctionDefinition[] = [
     maxDataLatencySec: 60,
     configuredAssistanceLevel: 'L2',
     maxAssistanceLevel: 'L2',
+    requiredSourceAreas: ['cargo_reefer', 'electrical_power'],
   },
   {
     id: 'shore_sync_assistance',
@@ -122,6 +135,7 @@ export const ASSISTED_FUNCTIONS: AssistedFunctionDefinition[] = [
     maxDataLatencySec: 10,
     configuredAssistanceLevel: 'L1',
     maxAssistanceLevel: 'L2',
+    requiredSourceAreas: ['communications'],
   },
 ]
 

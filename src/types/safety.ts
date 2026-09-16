@@ -1,4 +1,4 @@
-import type { AssistanceLevel, OddStatus, RiskLevel, SafetyVerdict } from './common'
+import type { AssistanceLevel, OddStatus, RiskLevel, SafetyVerdict, VesselSystemArea } from './common'
 
 export type OddParameterKey =
   | 'visibility'
@@ -37,6 +37,10 @@ export interface OddAssessment {
   /** Assistance level actually available right now given the envelope/system state, vs. the level configured for this function. */
   availableAssistanceLevel: AssistanceLevel
   configuredAssistanceLevel: AssistanceLevel
+  /** Hard ceiling declared for this function — enforced, never merely documented. */
+  maxAssistanceLevel: AssistanceLevel
+  /** Vessel system areas whose source-data availability this function actually depends on. */
+  requiredSourceAreas: VesselSystemArea[]
   assistanceLimitingReason?: string
 }
 

@@ -13,14 +13,14 @@ export const SIM_START_ISO = '2026-03-11T02:00:00.000Z'
 
 export function buildBaselineSnapshot(): VesselSnapshot {
   const systemHealth: SystemHealthSummary[] = [
-    { area: 'navigation', health: 'healthy', state: 'normal', headline: 'All navigation sensors nominal', confidence: 98 },
-    { area: 'main_engine', health: 'healthy', state: 'normal', headline: 'Main engine within baseline parameters', confidence: 97 },
-    { area: 'auxiliary_machinery', health: 'healthy', state: 'normal', headline: 'Auxiliary machinery nominal', confidence: 96 },
-    { area: 'electrical_power', health: 'healthy', state: 'normal', headline: 'Power generation stable, healthy reserve', confidence: 97 },
-    { area: 'fuel_energy', health: 'healthy', state: 'normal', headline: 'Fuel consumption tracking baseline', confidence: 95 },
-    { area: 'cargo_reefer', health: 'healthy', state: 'normal', headline: 'All reefer units within set point', confidence: 98 },
-    { area: 'safety', health: 'healthy', state: 'normal', headline: 'Safety systems ready', confidence: 99 },
-    { area: 'communications', health: 'healthy', state: 'normal', headline: 'Satellite and VHF links nominal', confidence: 96 },
+    { area: 'navigation', health: 'healthy', state: 'normal', headline: 'All navigation sensors nominal', confidence: 98 , dataAvailabilityPercent: 98, availabilityStatus: 'ok' },
+    { area: 'main_engine', health: 'healthy', state: 'normal', headline: 'Main engine within baseline parameters', confidence: 97 , dataAvailabilityPercent: 97, availabilityStatus: 'ok' },
+    { area: 'auxiliary_machinery', health: 'healthy', state: 'normal', headline: 'Auxiliary machinery nominal', confidence: 96 , dataAvailabilityPercent: 96, availabilityStatus: 'ok' },
+    { area: 'electrical_power', health: 'healthy', state: 'normal', headline: 'Power generation stable, healthy reserve', confidence: 97 , dataAvailabilityPercent: 97, availabilityStatus: 'ok' },
+    { area: 'fuel_energy', health: 'healthy', state: 'normal', headline: 'Fuel consumption tracking baseline', confidence: 95 , dataAvailabilityPercent: 95, availabilityStatus: 'ok' },
+    { area: 'cargo_reefer', health: 'healthy', state: 'normal', headline: 'All reefer units within set point', confidence: 98 , dataAvailabilityPercent: 98, availabilityStatus: 'ok' },
+    { area: 'safety', health: 'healthy', state: 'normal', headline: 'Safety systems ready', confidence: 99 , dataAvailabilityPercent: 99, availabilityStatus: 'ok' },
+    { area: 'communications', health: 'healthy', state: 'normal', headline: 'Satellite and VHF links nominal', confidence: 96 , dataAvailabilityPercent: 96, availabilityStatus: 'ok' },
   ]
 
   return {

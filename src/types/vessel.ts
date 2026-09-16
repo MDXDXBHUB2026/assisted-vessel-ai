@@ -1,4 +1,4 @@
-import type { HealthLevel, OperationalMode, SystemState, VesselSystemArea } from './common'
+import type { HealthLevel, MeasuredStatus, OperationalMode, SystemState, VesselSystemArea } from './common'
 
 export interface VesselIdentity {
   name: string
@@ -123,7 +123,20 @@ export interface SystemHealthSummary {
   health: HealthLevel
   state: SystemState
   headline: string
+  /**
+   * The analytical model's confidence in its own assessment of this area. NOTE: this is NOT a
+   * measure of whether the source data is available — a condition-monitoring model becomes MORE
+   * confident as a fault develops. Using it as an availability signal inverts the semantics.
+   * The safety engine must gate on `dataAvailabilityPercent` instead.
+   */
   confidence: number
+  /**
+   * Whether the underlying sensors/feeds for this area are actually delivering usable data,
+   * independent of what those data say. This is what "source system availability" means to the
+   * safety engine: a degraded feed reduces it, a worsening machinery condition does not.
+   */
+  dataAvailabilityPercent: number
+  availabilityStatus: MeasuredStatus
 }
 
 export interface VesselSnapshot {
