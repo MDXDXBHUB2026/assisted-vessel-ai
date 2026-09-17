@@ -4,6 +4,7 @@ import { VesselTopology, type TopologyLink, type TopologyNode } from '@/componen
 import { SYSTEM_AREA_LABELS, OPERATIONAL_MODE_LABELS, type VesselSystemArea } from '@/types'
 import { Anchor, Building2, Compass, Fuel, Gauge, Radio, ShieldAlert, Snowflake, Wrench, Zap, ArrowRight, Network, PlayCircle } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
+import { BUILD_SHA, BUILD_TIME_ISO } from '@/buildInfo'
 
 const AREA_ICONS: Record<VesselSystemArea, ReactNode> = {
   navigation: <Compass size={16} />,
@@ -154,6 +155,10 @@ export function LandingPage() {
           This independent technology demonstrator uses entirely synthetic operational data and illustrative engineering logic. It is not connected to a
           vessel, does not provide navigational or engineering advice, and is not intended for operational use. It does not claim operational certification
           or production readiness, and does not represent any real maritime organisation.
+        </p>
+        <p className="mx-auto mt-2 max-w-3xl font-mono text-ink-800">
+          Build {BUILD_SHA}
+          {BUILD_TIME_ISO ? ` · ${BUILD_TIME_ISO}` : ''}
         </p>
       </footer>
     </div>

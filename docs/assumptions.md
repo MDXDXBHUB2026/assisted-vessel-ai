@@ -132,3 +132,20 @@ A small number of explicitly named technologies were substituted for lighter alt
     `oddEngine.test.ts` asserts both that the real initial state is genuinely held at L1 by the
     hazard and that clearing the hazard register recovers L2/L3, proving the floor is not
     permanent.
+33. **The visual regression test (`e2e/navigation-console.spec.ts`, "visual regression: the plot
+    area at rest") runs locally only; CI enforces the eight behavioural assertions in that file
+    instead, and does not gate deployment on the pixel comparison.** Playwright pixel baselines
+    are platform-specific — the committed baseline
+    (`e2e/navigation-console.spec.ts-snapshots/navigation-ring-at-rest-chromium-win32.png`) was
+    generated on a developer's Windows machine, and CI runs on `ubuntu-latest`, which would look
+    for a `-chromium-linux.png` variant that does not exist. This previously failed the `e2e` job
+    on every run, which blocked `build` and `deploy` (`needs: [verify, e2e]`) and left GitHub
+    Pages silently serving a stale build for several commits with no visible signal that
+    deployment had stopped happening. The test is now skipped under `CI=true` with the reason
+    inline; it is not deleted, and still runs (and is useful) on a developer's own machine against
+    a baseline for their own platform — see `e2e/navigation-console.spec.ts-snapshots/README.md`.
+    Adding a Linux baseline so this could gate CI would require generating it inside a container
+    matching the CI image (`ubuntu-latest` + the exact Playwright/Chromium version), keeping it in
+    sync as that image updates, and maintaining it alongside the Windows one for local development
+    — judged not worth the complexity for a demonstrator relative to the eight assertions already
+    covering the same component's behaviour in CI.

@@ -116,9 +116,23 @@ jobs:
             echo "value=/$REPO_NAME/" >> "$GITHUB_OUTPUT"
           fi
 
+      # This is the actual lesson from the "Pages silently served a stale build for three commits"
+      # incident: `needs: [verify, e2e]` failing upstream left no visible signal on the site itself
+      # that a deployment had stopped happening. Stamping the commit and build time into the built
+      # site means the live site can always be checked against `git log` rather than trusted blind.
+      - name: Determine build metadata
+        id: build_meta
+        env:
+          FULL_SHA: ${{ github.sha }}
+        run: |
+          echo "short_sha=${FULL_SHA:0:7}" >> "$GITHUB_OUTPUT"
+          echo "build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       - name: Build
         env:
           VITE_BASE_PATH: ${{ steps.base_path.outputs.value }}
+          VITE_BUILD_SHA: ${{ steps.build_meta.outputs.short_sha }}
+          VITE_BUILD_TIME: ${{ steps.build_meta.outputs.build_time }}
         run: npm run build
 
       - name: Upload Pages artifact
