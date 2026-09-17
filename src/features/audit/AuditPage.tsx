@@ -17,6 +17,7 @@ const KIND_LABELS: Record<AuditEventKind, string> = {
   simulation: 'Simulation',
   assistance_level_change: 'Assistance Level',
   fallback_transition: 'Fallback',
+  hazard_lifecycle: 'Hazard Lifecycle',
 }
 
 const KIND_TONE: Record<AuditEventKind, 'neutral' | 'info' | 'healthy' | 'warning' | 'critical'> = {
@@ -31,6 +32,7 @@ const KIND_TONE: Record<AuditEventKind, 'neutral' | 'info' | 'healthy' | 'warnin
   simulation: 'neutral',
   assistance_level_change: 'info',
   fallback_transition: 'warning',
+  hazard_lifecycle: 'warning',
 }
 
 export function AuditPage() {

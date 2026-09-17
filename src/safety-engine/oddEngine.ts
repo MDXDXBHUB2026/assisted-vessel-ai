@@ -1,4 +1,4 @@
-import type { AssistanceLevel, OddAssessment, OddParameterStatus, OddStatus, VesselSnapshot } from '@/types'
+import type { AssistanceLevel, HazardCategory, OddAssessment, OddParameterStatus, OddStatus, VesselSnapshot } from '@/types'
 import { assistanceLevelRank, OPERATIONAL_MODE_LABELS } from '@/types'
 import { ASSISTED_FUNCTIONS, getAssistedFunction } from './oddFunctions'
 import { clamp } from '@/utils/random'
@@ -46,10 +46,17 @@ function minAssistanceLevel(a: AssistanceLevel, b: AssistanceLevel): AssistanceL
   return assistanceLevelRank(a) <= assistanceLevelRank(b) ? a : b
 }
 
-export function assessOdd(functionId: string, snapshot: VesselSnapshot): OddAssessment {
+/**
+ * @param activeHazardCategories Categories with at least one currently open, intolerable-band
+ * (RI 8-11) hazard — see `decision-engine/hazardLifecycle.ts#activeIntolerableHazardCategories`.
+ * Defaults to none so every existing caller (and every existing test) is unaffected until it
+ * opts in by passing the vessel's actual hazard register.
+ */
+export function assessOdd(functionId: string, snapshot: VesselSnapshot, activeHazardCategories: HazardCategory[] = []): OddAssessment {
   const fn = getAssistedFunction(functionId)
   const sensorConfidence = relevantSensorConfidence(fn, snapshot)
   const modeAllowed = fn.allowedModes.includes(snapshot.operationalMode)
+  const hazardActive = fn.hazardSensitiveCategories.some((category) => activeHazardCategories.includes(category))
 
   const visibility = classify(minMargin(snapshot.environment.visibilityNm, fn.minVisibilityNm, Math.max(fn.minVisibilityNm * 0.5, 1)))
   const waveHeight = classify(maxMargin(snapshot.environment.waveHeightM, fn.maxWaveHeightM, fn.maxWaveHeightM * 0.25))
@@ -78,6 +85,17 @@ export function assessOdd(functionId: string, snapshot: VesselSnapshot): OddAsse
     { key: 'dataLatency', label: 'Data Latency', value: `${snapshot.communications.shoreSyncLatencySec.toFixed(1)} s`, ...latency, detail: fn.requiresCommunications ? `Requires ≤ ${fn.maxDataLatencySec}s round-trip` : 'Not required — onboard function' },
     { key: 'trafficDensity', label: 'Traffic Density', value: snapshot.environment.trafficDensity, status: 'inside', marginFraction: 1, detail: 'Informational — affects recommendation priority, not envelope admission' },
     { key: 'machineryHealth', label: 'Machinery Health', value: snapshot.systemHealth.find((s) => s.area === 'main_engine')?.health ?? 'healthy', status: 'inside', marginFraction: 1, detail: 'Informational — considered separately by the safety validation layer' },
+    {
+      key: 'safetyHazard',
+      label: 'Active Safety Hazard',
+      value: hazardActive ? 'Intolerable hazard open in a sensitive category' : 'None',
+      ...classify(hazardActive ? -1 : 1),
+      detail: hazardActive
+        ? `An open, intolerable-band (RI 8-11) hazard in a category this function is sensitive to (${fn.hazardSensitiveCategories.join(', ')}) constrains assistance until resolved.`
+        : fn.hazardSensitiveCategories.length > 0
+          ? `No open intolerable hazard in a category this function is sensitive to (${fn.hazardSensitiveCategories.join(', ')}).`
+          : 'This function declares no hazard-category sensitivity.',
+    },
   ]
 
   const limitingFactors = parameters.filter((p) => p.status === 'outside')
@@ -120,6 +138,48 @@ export function assessOdd(functionId: string, snapshot: VesselSnapshot): OddAsse
   }
 }
 
-export function assessAllOdd(snapshot: VesselSnapshot): OddAssessment[] {
-  return ASSISTED_FUNCTIONS.map((fn) => assessOdd(fn.id, snapshot))
+export function assessAllOdd(snapshot: VesselSnapshot, activeHazardCategories: HazardCategory[] = []): OddAssessment[] {
+  return ASSISTED_FUNCTIONS.map((fn) => assessOdd(fn.id, snapshot, activeHazardCategories))
+}
+
+/**
+ * `shore_sync_assistance` is configured at L1 (a shore-side monitoring function, not a vessel
+ * safety-relevant one) while every other function is L2 or L3 — including it in a vessel-wide
+ * minimum pins that minimum at L1 permanently, regardless of actual conditions, which is exactly
+ * the defect where the ribbon's "Assistance Level" stat never visibly moves. Excluded here.
+ */
+const VESSEL_SAFETY_RELEVANT_FUNCTION_IDS = ['nav_collision_advisory', 'voyage_speed_optimisation', 'machinery_anomaly_detection', 'predictive_maintenance', 'reefer_monitoring']
+
+export interface VesselAssistanceLevelSummary {
+  level: AssistanceLevel
+  /** The function currently pulling the summary below L3, if any — named so the ribbon can show
+   * *why*, not just the number. */
+  constrainingFunctionLabel?: string
+  /**
+   * True when the constraint is an open, intolerable-band safety hazard rather than an
+   * environmental/sensor/mode condition. An operator seeing "L1" needs to know whether that is a
+   * routine envelope limit (which clears as conditions change) or a deliberately-held floor tied
+   * to an open hazard (which clears only when that hazard is resolved) — collapsing both into one
+   * undifferentiated "L1" would itself look like the stuck-forever defect this stat was fixed for.
+   */
+  constrainedByHazard?: boolean
+}
+
+/** The vessel's own assistance-level headline: the minimum available level across its safety-
+ * relevant assisted functions (excluding shore-side monitoring functions), naming whichever one
+ * is currently constraining it. Genuinely moves as conditions change — see oddEngine.test.ts. */
+export function vesselAssistanceLevelSummary(assessments: OddAssessment[]): VesselAssistanceLevelSummary {
+  const relevant = assessments.filter((a) => VESSEL_SAFETY_RELEVANT_FUNCTION_IDS.includes(a.functionId))
+  let summary: VesselAssistanceLevelSummary = { level: 'L3' }
+  for (const a of relevant) {
+    if (assistanceLevelRank(a.availableAssistanceLevel) < assistanceLevelRank(summary.level)) {
+      const hazardParam = a.parameters.find((p) => p.key === 'safetyHazard')
+      summary = {
+        level: a.availableAssistanceLevel,
+        constrainingFunctionLabel: a.functionLabel,
+        constrainedByHazard: hazardParam?.status === 'outside',
+      }
+    }
+  }
+  return summary
 }

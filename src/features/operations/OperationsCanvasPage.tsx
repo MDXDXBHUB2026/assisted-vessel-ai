@@ -8,6 +8,8 @@ import { NavigationCanvas } from '@/components/charts/NavigationCanvas'
 import { ROUTE_WAYPOINTS } from '@/data/route'
 import { assessAllOdd } from '@/safety-engine/oddEngine'
 import { correlateAlarms } from '@/decision-engine/alarmCorrelation'
+import { activeIntolerableHazardCategories } from '@/decision-engine/hazardLifecycle'
+import { riskBandToRiskLevel } from '@/decision-engine/riskMatrix'
 import { SYSTEM_AREA_LABELS, OPERATIONAL_MODE_LABELS, type OperationalMode } from '@/types'
 import { formatDateUtc, formatLatLon } from '@/utils/format'
 import { systemStateColor, systemStateLabel } from '@/utils/theme'
@@ -21,7 +23,7 @@ export function OperationsCanvasPage() {
   const awaiting = recommendations.filter((r) => r.status === 'awaiting_decision')
   const activeAlarms = rawAlarms.filter((a) => a.active)
   const { correlated, uncorrelatedCount } = correlateAlarms(rawAlarms)
-  const oddAssessments = assessAllOdd(snapshot)
+  const oddAssessments = assessAllOdd(snapshot, activeIntolerableHazardCategories(hazards))
   const constrainedFunctions = oddAssessments.filter((a) => a.status !== 'inside')
   const openHazards = hazards.filter((h) => h.status !== 'closed')
 
@@ -176,7 +178,7 @@ export function OperationsCanvasPage() {
               {openHazards.slice(0, 2).map((h) => (
                 <li key={h.id} className="flex items-center justify-between gap-2 rounded-sm border border-critical-500/30 bg-critical-500/5 px-2 py-1.5 text-xs">
                   <span className="truncate text-ink-100">{h.title}</span>
-                  <RiskBadge level={h.riskLevel} />
+                  <RiskBadge level={riskBandToRiskLevel(h.residualRisk.riskIndex)} label={`RI ${h.residualRisk.riskIndex}`} />
                 </li>
               ))}
             </ul>

@@ -15,7 +15,7 @@ import type {
   VesselSnapshot,
   VoyagePlan,
 } from '@/types'
-import { buildBaselineMaintenance, buildBaselineSnapshot, buildBaselineTargets, SIM_START_ISO } from './baseline'
+import { buildBaselineHazards, buildBaselineMaintenance, buildBaselineSnapshot, buildBaselineTargets, SIM_START_ISO } from './baseline'
 import { buildBaselineVoyagePlan } from '@/data/voyagePlan'
 import { buildBaselineFleet } from '@/data/fleet'
 import { buildInitialTelemetryHistory, type TelemetryHistoryState } from './telemetryHistory'
@@ -103,14 +103,14 @@ export interface SimulationState {
  */
 export function buildInitialSimulationState(startIdCounter = 1, startShoreCaseNumber = 1): SimulationState {
   const snapshot = buildBaselineSnapshot()
-  const telemetryHistory = buildInitialTelemetryHistory()
+  const telemetryHistory = buildInitialTelemetryHistory(snapshot)
   const initialAuditId = `AUD-${String(startIdCounter).padStart(6, '0')}`
 
   return {
     snapshot,
     targets: buildBaselineTargets(),
     maintenanceItems: buildBaselineMaintenance(),
-    hazards: [],
+    hazards: buildBaselineHazards(),
     rawAlarms: [],
     recommendations: [],
     auditEvents: [
@@ -138,7 +138,7 @@ export function buildInitialSimulationState(startIdCounter = 1, startShoreCaseNu
     tickCount: 0,
     nextShoreCaseNumber: startShoreCaseNumber,
     telemetryHistory,
-    machineryAnalysis: analyseMainEngine(snapshot),
+    machineryAnalysis: analyseMainEngine(snapshot, telemetryHistory),
     pocMode: 'offline',
     adapterStatuses: {
       telemetry: 'simulated',

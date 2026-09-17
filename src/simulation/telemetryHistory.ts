@@ -1,3 +1,5 @@
+import type { VesselSnapshot } from '@/types'
+
 /** A bounded, chronological rolling window of samples for one metric, used to compute genuine
  * trend/slope/persistence-based analytics rather than a point-in-time formula. */
 export interface HistoryBuffer {
@@ -9,6 +11,21 @@ export const HISTORY_MAX_SAMPLES = 60
 
 export function createEmptyHistory(): HistoryBuffer {
   return { values: [], times: [] }
+}
+
+/** ALSO FIX 3 (cold-start transient): a history buffer pre-populated with `count` copies of a
+ * steady-state value, spaced one minute apart into the past. Used so a freshly-loaded, perfectly
+ * healthy vessel does not read as under-sampled for its first few ticks — see
+ * `buildInitialTelemetryHistory`. Slope is 0 and persistence is 0 for a seeded buffer, exactly as
+ * they should be for a vessel that was already running steadily before the operator opened the app. */
+function seedHistory(value: number, count: number, nowMs: number): HistoryBuffer {
+  const values: number[] = []
+  const times: number[] = []
+  for (let i = count; i >= 1; i--) {
+    values.push(value)
+    times.push(nowMs - i * 60_000)
+  }
+  return { values, times }
 }
 
 export function pushSample(buf: HistoryBuffer, timeMs: number, value: number, maxLen = HISTORY_MAX_SAMPLES): HistoryBuffer {
@@ -68,17 +85,26 @@ export interface TelemetryHistoryState {
   anomalyScore: HistoryBuffer
 }
 
-export function buildInitialTelemetryHistory(): TelemetryHistoryState {
+/**
+ * Seeded with the baseline snapshot's own steady-state values rather than starting empty, so
+ * `analyseMainEngine`'s data-maturity penalty (sampleCount < 6) — correct behaviour, not removed
+ * here — does not apply on a vessel that has not actually just started operating. Without this,
+ * the ribbon reads OUTSIDE ODD / DATA QUALITY LOW on a perfectly healthy vessel for the first few
+ * ticks after every load, purely because the rolling window was briefly empty.
+ */
+export function buildInitialTelemetryHistory(snapshot: VesselSnapshot): TelemetryHistoryState {
+  const nowMs = new Date(snapshot.simTimeIso).getTime()
+  const seedCount = 6
   return {
-    exhaustTempDeviationC: createEmptyHistory(),
-    cylinderSpreadC: createEmptyHistory(),
-    lubOilPressureBar: createEmptyHistory(),
-    fuelConsumptionRateTonPerDay: createEmptyHistory(),
-    gnssConfidence: createEmptyHistory(),
-    satelliteConfidence: createEmptyHistory(),
-    blackoutRiskScore: createEmptyHistory(),
-    rpm: createEmptyHistory(),
-    loadPercent: createEmptyHistory(),
-    anomalyScore: createEmptyHistory(),
+    exhaustTempDeviationC: seedHistory(snapshot.mainEngine.exhaustTempDeviationC, seedCount, nowMs),
+    cylinderSpreadC: seedHistory(0, seedCount, nowMs),
+    lubOilPressureBar: seedHistory(snapshot.mainEngine.lubOilPressureBar, seedCount, nowMs),
+    fuelConsumptionRateTonPerDay: seedHistory(snapshot.fuelEnergy.fuelConsumptionRateTonPerDay, seedCount, nowMs),
+    gnssConfidence: seedHistory(snapshot.navigation.gnssConfidence, seedCount, nowMs),
+    satelliteConfidence: seedHistory(snapshot.communications.satelliteConfidence, seedCount, nowMs),
+    blackoutRiskScore: seedHistory(snapshot.electricalPower.blackoutRiskScore, seedCount, nowMs),
+    rpm: seedHistory(snapshot.mainEngine.rpm, seedCount, nowMs),
+    loadPercent: seedHistory(snapshot.mainEngine.loadPercent, seedCount, nowMs),
+    anomalyScore: seedHistory(0, seedCount, nowMs),
   }
 }

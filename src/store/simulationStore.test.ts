@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { useSimulationStore } from './simulationStore'
+import { activeIntolerableHazardCategories } from '@/decision-engine/hazardLifecycle'
 
 /** Advances the store's simulation by roughly `minutes` of simulated time. */
 function advance(minutes: number) {
@@ -183,6 +184,13 @@ describe('L3 supervised execution — the only action that changes vessel behavi
     useSimulationStore.getState().acceptVoyageRecommendation('master')
 
     const state = useSimulationStore.getState()
+    // Precondition: this only holds because the baseline hazard register's open, intolerable-band
+    // example is categorised 'cargo' (reefer_monitoring only), never 'navigation', 'machinery' or
+    // 'environmental' — all of which voyage_speed_optimisation is sensitive to. If a future edit
+    // to `buildBaselineHazards()` opens an intolerable hazard in one of those categories, this
+    // assertion fails here with a clear reason instead of `recommendationAccepted` failing opaquely.
+    const heldCategories = activeIntolerableHazardCategories(state.hazards)
+    expect(heldCategories.some((c) => c === 'navigation' || c === 'machinery' || c === 'environmental')).toBe(false)
     expect(state.voyagePlan.recommendationAccepted).toBe(true)
     expect(state.voyagePlan.userModifiedSpeedKn).toBe(state.voyagePlan.recommendedSpeedKn)
 

@@ -21,6 +21,8 @@ import {
   type RecommendationContent,
 } from '@/decision-engine/builders'
 import { CAUTION_BAND_MULTIPLIER } from '@/decision-engine/targetRisk'
+import { activeIntolerableHazardCategories } from '@/decision-engine/hazardLifecycle'
+import { buildRiskAssessment } from '@/decision-engine/riskMatrix'
 
 const REEFER_EXCURSION_INDEX = 3
 
@@ -264,9 +266,51 @@ export function tick(prev: SimulationState, dtMinutesBase: number): SimulationSt
     }
   }
 
+  // --- hazards: determine whether a new hazard is raised this tick -----------------------------
+  // Done BEFORE the ODD assessment below so a brand-new hazard's category constrains the ODD, and
+  // its own assistance-level change is audited, in the SAME tick it appears — not one tick later.
+  // (`prevHazardCategories` still legitimately differs from `currentHazardCategories` on every
+  // other tick, from hazard transitions/closures the operator makes between ticks.)
+  const scenarioTriggers = { ...prev.scenarioTriggers }
+  let newHazard: Hazard | undefined
+  if (prev.activeScenario === 'safety_event' && severity > 0.3 && !scenarioTriggers['safety_hazard']) {
+    scenarioTriggers['safety_hazard'] = true
+    const hazardTitle = 'Bilge High-Level Alarm — Forward Compartment'
+    const hazardId = nextId('HAZ')
+    // FI 5 (Reasonably Probable) / SI 3 (Severe) -> RI 8, intolerable. Residual equals initial
+    // until a corrective action is formally recorded — immediate mitigation (isolation, pumping,
+    // muster) is real but does not itself earn mitigation credit on the matrix.
+    const initialRisk = buildRiskAssessment(5, 3)
+    newHazard = {
+      id: hazardId,
+      title: hazardTitle,
+      category: 'personnel',
+      peopleExposed: 4,
+      immediateMitigation: 'Compartment isolated, bilge pump engaged, crew mustered to standby.',
+      recommendedCorrectiveAction: 'Investigate source of ingress, inspect compartment, and follow SMS emergency procedure.',
+      initialRisk,
+      residualRisk: initialRisk,
+      status: 'identified',
+      raisedAtIso: simTimeIso,
+      correlatedAlarmTags: ['SAFETY_BILGE_ALARM'],
+    }
+    pushAudit({ kind: 'hazard_lifecycle', event: `Safety hazard identified: ${newHazard.title} (RI ${initialRisk.riskIndex}).`, outcome: 'identified', hazardId: newHazard.id })
+  }
+  if (prev.activeScenario !== 'safety_event') {
+    scenarioTriggers['safety_hazard'] = false
+    // `maybeFire('safety_event_rec', true, ...)` is only ever called with condition === true, so
+    // its own reset branch can never run and the flag would latch for the whole session: a second
+    // safety_event raised a hazard with no recommendation, no safety validation and no audit of
+    // either — a silent gap in the exact chain this demonstrator exists to show.
+    scenarioTriggers['safety_event_rec'] = false
+  }
+  let hazards: Hazard[] = newHazard ? [newHazard, ...prev.hazards] : [...prev.hazards]
+
   // --- audit: assistance-level changes per assisted function ---
-  const prevOdd = assessAllOdd(prev.snapshot)
-  const currentOdd = assessAllOdd(snapshot)
+  const prevHazardCategories = activeIntolerableHazardCategories(prev.hazards)
+  const currentHazardCategories = activeIntolerableHazardCategories(hazards)
+  const prevOdd = assessAllOdd(prev.snapshot, prevHazardCategories)
+  const currentOdd = assessAllOdd(snapshot, currentHazardCategories)
   for (const current of currentOdd) {
     const before = prevOdd.find((o) => o.functionId === current.functionId)
     if (before && before.availableAssistanceLevel !== current.availableAssistanceLevel) {
@@ -287,9 +331,8 @@ export function tick(prev: SimulationState, dtMinutesBase: number): SimulationSt
 
   // --- recommendations (guarded by trigger flags so each scenario run fires once per threshold) ---
   const recommendations: Recommendation[] = [...prev.recommendations]
-  const scenarioTriggers = { ...prev.scenarioTriggers }
 
-  const maybeFire = (key: string, condition: boolean, build: () => RecommendationContent) => {
+  const maybeFire = (key: string, condition: boolean, build: () => RecommendationContent): Recommendation | undefined => {
     if (condition && !scenarioTriggers[key]) {
       scenarioTriggers[key] = true
       const { functionId, ...content } = build()
@@ -299,13 +342,15 @@ export function tick(prev: SimulationState, dtMinutesBase: number): SimulationSt
       const alreadyPending = recommendations.some(
         (r) => r.status === 'awaiting_decision' && r.vesselFunction === content.vesselFunction && r.title === content.title,
       )
-      if (alreadyPending) return
+      if (alreadyPending) return undefined
       const oddAssessment = currentOdd.find((o) => o.functionId === functionId)
       const safetyValidation = validateRecommendation({
         functionId,
         snapshot,
         riskLevel: content.riskLevel,
         requiredAuthority: content.requiredAuthority,
+        activeHazardCategories: currentHazardCategories,
+        originatingHazardCategory: content.originatingHazardCategory,
       })
       const rec: Recommendation = {
         ...content,
@@ -333,9 +378,12 @@ export function tick(prev: SimulationState, dtMinutesBase: number): SimulationSt
         recommendationId: rec.id,
         safetyValidationResult: rec.safetyValidation.verdict,
       })
-    } else if (!condition && scenarioTriggers[key]) {
+      return rec
+    }
+    if (!condition && scenarioTriggers[key]) {
       scenarioTriggers[key] = false
     }
+    return undefined
   }
 
   maybeFire('engine_degradation_rec', prev.activeScenario === 'engine_degradation' && severity > 0.45, () => engineDegradationRecommendation(snapshot, machineryAnalysis, severity))
@@ -365,36 +413,14 @@ export function tick(prev: SimulationState, dtMinutesBase: number): SimulationSt
 
   maybeFire('gnss_degradation_rec', prev.activeScenario === 'gnss_sensor_degradation' && severity > 0.45, () => gnssDegradationRecommendation(gnssConfidence))
 
-  // --- hazards ---
-  const hazards: Hazard[] = [...prev.hazards]
-  if (prev.activeScenario === 'safety_event' && severity > 0.3 && !scenarioTriggers['safety_hazard']) {
-    scenarioTriggers['safety_hazard'] = true
-    const hazard: Hazard = {
-      id: nextId('HAZ'),
-      title: 'Bilge High-Level Alarm — Forward Compartment',
-      category: 'personnel',
-      riskLevel: 'high',
-      likelihood: 'possible',
-      severity: 'major',
-      peopleExposed: 4,
-      immediateMitigation: 'Compartment isolated, bilge pump engaged, crew mustered to standby.',
-      recommendedCorrectiveAction: 'Investigate source of ingress, inspect compartment, and follow SMS emergency procedure.',
-      responsibleRole: 'Chief Officer',
-      residualRisk: 'medium',
-      status: 'open',
-      raisedAtIso: simTimeIso,
+  // The hazard itself (if any) was already built above so it could feed this tick's ODD
+  // assessment; its recommendation is raised here, after `maybeFire` exists, and linked back.
+  if (newHazard) {
+    const raisedHazard = newHazard
+    const safetyRec = maybeFire('safety_event_rec', true, () => safetyEventRecommendation(raisedHazard.title, raisedHazard.id, raisedHazard.category))
+    if (safetyRec) {
+      hazards = hazards.map((h) => (h.id === raisedHazard.id ? { ...h, recommendationId: safetyRec.id } : h))
     }
-    hazards.unshift(hazard)
-    pushAudit({ kind: 'safety_validation', event: `Safety hazard raised: ${hazard.title}`, outcome: 'open' })
-    maybeFire('safety_event_rec', true, () => safetyEventRecommendation(hazard.title))
-  }
-  if (prev.activeScenario !== 'safety_event') {
-    scenarioTriggers['safety_hazard'] = false
-    // `maybeFire('safety_event_rec', true, ...)` is only ever called with condition === true, so
-    // its own reset branch can never run and the flag would latch for the whole session: a second
-    // safety_event raised a hazard with no recommendation, no safety validation and no audit of
-    // either — a silent gap in the exact chain this demonstrator exists to show.
-    scenarioTriggers['safety_event_rec'] = false
   }
 
   // --- voyage plan derived fields ---
@@ -475,6 +501,8 @@ export function tick(prev: SimulationState, dtMinutesBase: number): SimulationSt
       snapshot,
       riskLevel: rec.riskLevel,
       requiredAuthority: rec.requiredAuthority,
+      activeHazardCategories: currentHazardCategories,
+      originatingHazardCategory: rec.originatingHazardCategory,
     })
     if (fresh.verdict === rec.safetyValidation.verdict) return rec
 

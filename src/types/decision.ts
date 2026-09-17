@@ -1,5 +1,5 @@
 import type { DataProvenance, DataQuality, OddStatus, OperationalMode, RequiredAuthority, RiskLevel, VesselSystemArea } from './common'
-import type { OddAssessment, SafetyValidationResult } from './safety'
+import type { HazardCategory, OddAssessment, SafetyValidationResult } from './safety'
 
 export type DecisionStatus =
   | 'awaiting_decision'
@@ -59,6 +59,10 @@ export interface Recommendation {
   decidedAtIso?: string
   outcome?: string
   scenarioId?: string
+  /** Closes the decision chain both ways: the hazard that generated this recommendation, if any. */
+  hazardId?: string
+  /** The category of the hazard named by `hazardId` — see `ValidationInput.originatingHazardCategory`. */
+  originatingHazardCategory?: HazardCategory
 }
 
 export type AuditEventKind =
@@ -73,6 +77,7 @@ export type AuditEventKind =
   | 'simulation'
   | 'assistance_level_change'
   | 'fallback_transition'
+  | 'hazard_lifecycle'
 
 export interface AuditEvent {
   id: string
@@ -89,4 +94,6 @@ export interface AuditEvent {
   decisionComment?: string
   responsibleRole?: string
   outcome?: string
+  /** The hazard this audit entry belongs to, for the hazard's "reach its audit entries" linkage. */
+  hazardId?: string
 }

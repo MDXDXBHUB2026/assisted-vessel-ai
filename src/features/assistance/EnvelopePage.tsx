@@ -3,13 +3,15 @@ import { Panel } from '@/components/ui/Panel'
 import { OddStatusBadge, AssistanceLevelTag } from '@/components/ui/Badge'
 import { InstrumentRow } from '@/components/ui/InstrumentRow'
 import { assessAllOdd } from '@/safety-engine/oddEngine'
+import { activeIntolerableHazardCategories } from '@/decision-engine/hazardLifecycle'
 import { SYSTEM_AREA_LABELS } from '@/types'
 import { systemStateColor, systemStateLabel } from '@/utils/theme'
 import { ScanLine } from 'lucide-react'
 
 export function EnvelopePage() {
   const snapshot = useSimulationStore((s) => s.snapshot)
-  const assessments = assessAllOdd(snapshot)
+  const hazards = useSimulationStore((s) => s.hazards)
+  const assessments = assessAllOdd(snapshot, activeIntolerableHazardCategories(hazards))
 
   return (
     <div className="flex flex-col gap-5">

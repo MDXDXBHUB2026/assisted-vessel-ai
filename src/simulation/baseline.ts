@@ -1,5 +1,6 @@
 import type {
   CargoReeferState,
+  Hazard,
   MaintenanceItem,
   ReeferUnit,
   SystemHealthSummary,
@@ -8,6 +9,7 @@ import type {
 } from '@/types'
 import { OWN_VESSEL_IDENTITY } from '@/data/vesselIdentity'
 import { DEPARTURE_POSITION } from '@/data/route'
+import { buildRiskAssessment } from '@/decision-engine/riskMatrix'
 
 export const SIM_START_ISO = '2026-03-11T02:00:00.000Z'
 
@@ -374,6 +376,128 @@ export function buildBaselineMaintenance(): MaintenanceItem[] {
       nextSuitableOpportunity: 'Next suitable port call with technician availability',
       estimatedDowntimeHours: 4,
       operationalConsequence: 'Reduced reefer redundancy in affected bank',
+    },
+  ]
+}
+
+function hoursBeforeStart(hours: number): string {
+  return new Date(new Date(SIM_START_ISO).getTime() - hours * 3_600_000).toISOString()
+}
+
+/**
+ * A realistic hazard register — several hazards across categories in varied lifecycle states, not
+ * the single card the old static view showed. Exercises the risk matrix (several markers, an
+ * initial-to-residual arrow wherever a corrective action has been recorded), the register's
+ * filtering/sorting, and the OVERDUE state (several of these are already past their RI-band
+ * target response time at simulation start, exactly like the "open 2h23m, stated nowhere" defect
+ * this rebuild fixes).
+ */
+export function buildBaselineHazards(): Hazard[] {
+  return [
+    {
+      id: 'HAZ-B00001',
+      title: 'Cargo Lashing Fatigue — Bay 4 Container Stack',
+      category: 'cargo',
+      peopleExposed: 2,
+      immediateMitigation: 'Visual inspection completed; no shifted containers observed. Bay flagged for enhanced monitoring.',
+      recommendedCorrectiveAction: 'Re-tension lashings and replace fatigued twist-locks at next suitable opportunity.',
+      // RI 8, intolerable — deliberately the register's live "Master decision required" example.
+      // Category 'cargo' constrains only reefer_monitoring (see oddFunctions.ts
+      // hazardSensitiveCategories), not the machinery/voyage functions other scenarios exercise
+      // at their own nominal envelope — "flooding constrains different functions than a cargo
+      // hazard" (spec §6) is exactly this differentiation, not a coincidence.
+      initialRisk: buildRiskAssessment(5, 3),
+      residualRisk: buildRiskAssessment(5, 3),
+      status: 'assigned',
+      raisedAtIso: hoursBeforeStart(6),
+      owner: { role: 'safety_specialist', assignedAtIso: hoursBeforeStart(5.5) },
+      correlatedAlarmTags: [],
+    },
+    {
+      id: 'HAZ-B00002',
+      title: 'Radar Sea-Clutter Suppression Fault — X-Band Unit',
+      category: 'navigation',
+      peopleExposed: 0,
+      immediateMitigation: 'Bridge team briefed to cross-check with S-band radar and visual lookout in heavy sea states.',
+      recommendedCorrectiveAction: 'Technician reset of clutter suppression module; escalate to shore support if fault persists.',
+      initialRisk: buildRiskAssessment(3, 2), // RI 5, ALARP
+      residualRisk: buildRiskAssessment(3, 2),
+      status: 'identified',
+      raisedAtIso: hoursBeforeStart(1),
+      correlatedAlarmTags: [],
+    },
+    {
+      id: 'HAZ-B00003',
+      title: 'Auxiliary Engine No. 2 Cooling-Water Leak',
+      category: 'machinery',
+      peopleExposed: 1,
+      immediateMitigation: 'Leak rate confirmed low and stable; make-up water topped up; hourly rounds increased.',
+      recommendedCorrectiveAction: 'Isolate and inspect the jacket-water circuit; renew the suspected gasket.',
+      initialRisk: buildRiskAssessment(4, 3), // RI 7, ALARP — serious and under active investigation, not (yet) intolerable
+      residualRisk: buildRiskAssessment(4, 3),
+      status: 'under_investigation',
+      raisedAtIso: hoursBeforeStart(0.75),
+      owner: { role: 'chief_engineer', assignedAtIso: hoursBeforeStart(0.6) },
+      correlatedAlarmTags: [],
+    },
+    {
+      id: 'HAZ-B00004',
+      title: 'Crew Laceration — Galley Preparation Area',
+      category: 'personnel',
+      peopleExposed: 1,
+      immediateMitigation: 'First aid administered; crew member fit for light duties.',
+      recommendedCorrectiveAction: 'Replace worn cutting-board non-slip matting and refresh galley safety briefing.',
+      initialRisk: buildRiskAssessment(5, 1), // RI 6, ALARP
+      residualRisk: buildRiskAssessment(3, 1), // RI 4 — mitigation credit earned, corrective action recorded
+      status: 'closed',
+      raisedAtIso: hoursBeforeStart(50),
+      owner: { role: 'master', assignedAtIso: hoursBeforeStart(49) },
+      correctiveAction: { description: 'Non-slip matting replaced across all galley cutting stations; safety briefing refreshed with full catering crew.', recordedAtIso: hoursBeforeStart(30), recordedByRole: 'master' },
+      verification: { note: 'No recurrence over two full galley rotations; matting inspected and holding.', verifiedAtIso: hoursBeforeStart(4), verifiedByRole: 'master' },
+      correlatedAlarmTags: [],
+    },
+    {
+      id: 'HAZ-B00005',
+      title: 'Fuel Oil Transfer Valve Mislabelling — Engine Room',
+      category: 'environmental',
+      peopleExposed: 2,
+      immediateMitigation: 'Affected valves tagged out and manually verified before each transfer pending relabelling.',
+      recommendedCorrectiveAction: 'Relabel all fuel transfer valves per the piping diagram and re-brief engine room watchkeepers.',
+      initialRisk: buildRiskAssessment(3, 3), // RI 6, ALARP
+      residualRisk: buildRiskAssessment(1, 3), // RI 4 — corrective action recorded
+      status: 'corrective_action',
+      raisedAtIso: hoursBeforeStart(5),
+      owner: { role: 'chief_engineer', assignedAtIso: hoursBeforeStart(4.5) },
+      correctiveAction: { description: 'All fuel transfer valves relabelled against the current piping diagram; watchkeepers re-briefed and sign-off logged.', recordedAtIso: hoursBeforeStart(1.5), recordedByRole: 'chief_engineer' },
+      correlatedAlarmTags: [],
+    },
+    {
+      id: 'HAZ-B00006',
+      title: 'Unauthorised Access to Restricted Deck Area',
+      category: 'security',
+      peopleExposed: 0,
+      immediateMitigation: 'Area re-secured; access log reviewed, no cargo or equipment interference found.',
+      recommendedCorrectiveAction: 'Review restricted-area signage and access-control procedure at next port.',
+      initialRisk: buildRiskAssessment(2, 2), // RI 4, broadly acceptable
+      residualRisk: buildRiskAssessment(2, 2),
+      status: 'acknowledged',
+      raisedAtIso: hoursBeforeStart(0.2),
+      correlatedAlarmTags: [],
+    },
+    {
+      id: 'HAZ-B00007',
+      title: 'Reefer Bank B Power Fluctuation — Adjacent Unit Risk',
+      category: 'cargo',
+      peopleExposed: 0,
+      immediateMitigation: 'Adjacent reefer units placed on enhanced temperature monitoring pending resolution.',
+      recommendedCorrectiveAction: 'Technical superintendent review of the power distribution fault upstream of Bank B.',
+      initialRisk: buildRiskAssessment(4, 1), // RI 5, ALARP
+      residualRisk: buildRiskAssessment(4, 1),
+      status: 'escalated',
+      raisedAtIso: hoursBeforeStart(8),
+      owner: { role: 'chief_engineer', assignedAtIso: hoursBeforeStart(7.5) },
+      escalation: { escalatedToRole: 'technical_superintendent', escalatedAtIso: hoursBeforeStart(2), note: 'Onboard troubleshooting inconclusive; requesting shore technical review of the upstream distribution fault.', preEscalationStatus: 'assigned' },
+      correlatedAlarmTags: [],
     },
   ]
 }

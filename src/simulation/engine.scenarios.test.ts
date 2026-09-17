@@ -3,6 +3,7 @@ import { tick } from './engine'
 import { buildInitialSimulationState, type SimulationState } from './state'
 import { assessOdd } from '@/safety-engine/oddEngine'
 import { correlateAlarms } from '@/decision-engine/alarmCorrelation'
+import { activeIntolerableHazardCategories } from '@/decision-engine/hazardLifecycle'
 import type { ScenarioId } from '@/types'
 
 /** Runs the engine forward by a fixed number of 1-minute ticks, simulating the scenario ramp. */
@@ -17,6 +18,14 @@ function runScenario(scenario: ScenarioId, minutes: number, speedMultiplier = 1)
 describe('ENGINE DEGRADATION scenario — full sense-to-audit chain', () => {
   it('gradually deteriorates telemetry, raises alarms, generates a Chief-Engineer recommendation, and audits every step', () => {
     const state = runScenario('engine_degradation', 260)
+
+    // Precondition, not incidental: this test's `passed`/`inside` assertions below only hold
+    // because the baseline hazard register's open, intolerable-band example is categorised
+    // 'cargo' (affecting reefer_monitoring only), never 'machinery' or 'navigation'. If a future
+    // edit to `buildBaselineHazards()` adds an open intolerable hazard in either category, this
+    // assertion fails here with a clear reason instead of the two assertions below failing
+    // opaquely from an unrelated-looking cause.
+    expect(activeIntolerableHazardCategories(state.hazards)).not.toContain('machinery')
 
     // sense/understand: telemetry has genuinely moved and history was recorded
     expect(state.snapshot.mainEngine.exhaustTempDeviationC).toBeGreaterThan(10)
@@ -156,6 +165,46 @@ describe('SAFETY EVENT scenario', () => {
     expect(state.snapshot.safetySystems.bilgeAlarmActive).toBe(true)
     const rec = state.recommendations.find((r) => r.vesselFunction === 'safety')
     expect(rec?.requiredAuthority).toBe('master')
+  })
+
+  it('audits the assistance-level change on the exact same tick the hazard first appears', () => {
+    // Regression guard: `prevOdd`/`currentOdd` previously used the same (pre-hazard) category set
+    // for both sides of the change-detection comparison, so a hazard-driven assistance drop was
+    // never observed by the audit trail at all — not delayed, simply never recorded.
+    let state: SimulationState = { ...buildInitialSimulationState(), activeScenario: 'safety_event' }
+    const baselineHazardCount = state.hazards.length
+    let tickAuditTimestamp: string | undefined
+    for (let i = 0; i < 50 && tickAuditTimestamp === undefined; i++) {
+      const prevTime = state.snapshot.simTimeIso
+      state = tick(state, 1)
+      if (state.hazards.length > baselineHazardCount) tickAuditTimestamp = prevTime
+    }
+    expect(tickAuditTimestamp).toBeDefined()
+    // Every audit event `pushAudit` writes within a single `tick()` call carries that tick's
+    // `prev.snapshot.simTimeIso`, so an event sharing this timestamp was written on the very tick
+    // the hazard was created. The newly-raised hazard is 'personnel'; nav_collision_advisory is
+    // the vessel-safety-relevant function declared sensitive to that category, so its assistance-
+    // level-change audit event, if the fix works, must appear in that same batch.
+    const sameTickChange = state.auditEvents.find(
+      (e) => e.kind === 'assistance_level_change' && e.timestampIso === tickAuditTimestamp && e.event.includes('Navigation Collision-Risk Advisory'),
+    )
+    expect(sameTickChange).toBeDefined()
+  })
+
+  it('the runtime-minted hazard never collides with a baseline hazard ID, and the recommendation validation reflects the hazard it was raised from', () => {
+    // Regression guard: the baseline register and the engine's monotonic ID minter previously
+    // shared the same 'HAZ-000NNN' numbering space, so a runtime-raised hazard could collide with
+    // and silently overwrite a baseline hazard sharing the same minted number.
+    const state = runScenario('safety_event', 50)
+    expect(new Set(state.hazards.map((h) => h.id)).size).toBe(state.hazards.length)
+
+    const rec = state.recommendations.find((r) => r.vesselFunction === 'safety')!
+    const originatingHazard = state.hazards.find((h) => h.id === rec.hazardId)
+    expect(originatingHazard).toBeDefined()
+    expect(rec.originatingHazardCategory).toBe(originatingHazard!.category)
+    // The bilge hazard is 'personnel' and remains open ('identified') at this point in the ramp —
+    // its own recommendation must reflect that it is still constrained by its own hazard.
+    expect(rec.safetyValidation.checks.find((c) => c.label === 'Not constrained by an active intolerable safety hazard')?.passed).toBe(false)
   })
 })
 

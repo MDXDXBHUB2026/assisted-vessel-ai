@@ -91,3 +91,44 @@ A small number of explicitly named technologies were substituted for lighter alt
     recommendation; its `riskLevel` should not be read as agreeing with `relativeRisk` for this
     scenario. Making the demo scenario itself produce a genuine joint-converging encounter is
     unresolved follow-up work, not attempted here.
+29. **The Safety Intelligence view applies the IMO Formal Safety Assessment (FSA) risk indices
+    (MSC-MEPC.2/Circ.12/Rev.2) and the ISM Code hazard-reporting/corrective-action lifecycle (ISM
+    9.1, 9.2, 5.2) for legibility and credibility only, over entirely synthetic hazards.** It is
+    **not** a certified Safety Management System, does not claim ISM compliance or SMS
+    certification, and must never be used for actual shipboard risk assessment or hazard
+    reporting — see `docs/safety-intelligence-specification.md`.
+30. **The Frequency Index / Severity Index / Risk Index band thresholds
+    (`src/decision-engine/riskMatrix.ts#RISK_BAND_THRESHOLDS`) are this project's own explicit risk
+    evaluation criteria, not a value taken from MSC-MEPC.2/Circ.12/Rev.2 or any other standard.**
+    FSA states explicitly that no universally accepted acceptance criteria exist and that whatever
+    criteria are used must be stated explicitly. This demonstrator adopts: RI 2–4 Broadly
+    Acceptable (monitor only), RI 5–7 ALARP (mitigation required, residual risk must be justified
+    As Low As Reasonably Practicable), RI 8–11 Intolerable (immediate control, Master informed,
+    escalate to Company). A different, equally defensible project could draw these lines
+    differently; these are the ones this demonstrator uses and displays as its own.
+31. **The hazard-derived ODD constraint (§6 of `docs/safety-intelligence-specification.md`) was
+    implemented, not deferred.** An open, intolerable-band (RI 8–11) hazard now constrains the
+    assisted functions declared sensitive to its category
+    (`AssistedFunctionDefinition.hazardSensitiveCategories` in `safety-engine/oddFunctions.ts`),
+    clamped the same way any other outside-envelope parameter is (§ `safety-engine/oddEngine.ts`
+    `safetyHazard` parameter). Every hazard category maps to at least one real assisted function,
+    verified by a property test (`validate.properties.test.ts`, "SAFETY-HAZARD-001") asserting an
+    active intolerable hazard can never leave every function at full configured assistance. The
+    mapping of category to sensitive function (e.g. `personnel` -> bridge/shore-engagement
+    functions, `cargo` -> reefer monitoring) is this project's own judgement call, disclosed here
+    rather than presented as a standard: a different, equally defensible mapping could be drawn.
+32. **The baseline hazard register deliberately opens with one active, intolerable-band (RI 8)
+    hazard, and this genuinely holds the vessel-wide "Assistance Level" ribbon stat at L1 from
+    application start until that hazard is resolved.** This is not a reintroduction of the ALSO-FIX-2
+    defect (`shore_sync_assistance` permanently poisoning that stat regardless of conditions,
+    fixed by excluding shore-side functions from `VESSEL_SAFETY_RELEVANT_FUNCTION_IDS` in
+    `safety-engine/oddEngine.ts`): every hazard category maps to at least one vessel-safety-relevant
+    function (`SAFETY-HAZARD-001`), so no choice of baseline category could avoid holding the stat
+    down while that example hazard is open, and an open RI 8 hazard genuinely should constrain
+    something. The distinguishing fix is that `vesselAssistanceLevelSummary` now reports
+    `constrainedByHazard` alongside `level`, and `CommandRibbon` renders a hazard-held floor
+    ("Held by open safety hazard: …") differently from a routine envelope/condition limit
+    ("Limited by …") — so the two cases are never visually indistinguishable, and
+    `oddEngine.test.ts` asserts both that the real initial state is genuinely held at L1 by the
+    hazard and that clearing the hazard register recovers L2/L3, proving the floor is not
+    permanent.

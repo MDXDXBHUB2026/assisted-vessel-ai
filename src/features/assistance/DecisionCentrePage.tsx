@@ -8,7 +8,8 @@ import { Modal } from '@/components/ui/Modal'
 import { Tabs } from '@/components/ui/Tabs'
 import { resolveCopilotAdapter } from '@/services/adapters/copilotAdapter'
 import { AUTHORITY_LABELS, ANALYTICAL_METHOD_LABELS, OPERATIONAL_MODE_LABELS, type Recommendation } from '@/types'
-import { ClipboardCheck } from 'lucide-react'
+import { ClipboardCheck, ArrowUpRight } from 'lucide-react'
+import { Link } from 'react-router-dom'
 
 const DECISION_LABELS: Record<string, string> = {
   awaiting_decision: 'Awaiting Decision',
@@ -166,7 +167,10 @@ function RecommendationCard({ rec, onOpen }: { rec: Recommendation; onOpen: () =
         </div>
       </div>
       <p className="mt-1 text-xs text-ink-400">{rec.detectedCondition}</p>
-      <p className="mt-1 text-[11px] text-ink-500">Requires: {AUTHORITY_LABELS[rec.requiredAuthority]} · Confidence {rec.confidencePercent}%</p>
+      <p className="mt-1 text-[11px] text-ink-500">
+        Requires: {AUTHORITY_LABELS[rec.requiredAuthority]} · Confidence {rec.confidencePercent}%
+        {rec.hazardId && <span className="ml-2 text-info-400">· Linked hazard {rec.hazardId}</span>}
+      </p>
     </button>
   )
 }
@@ -189,6 +193,14 @@ function UnderstandTab({ rec, understanding, onAsk }: { rec: Recommendation; und
         <div className="text-[11px] uppercase tracking-wide text-ink-500">Detected Condition</div>
         <p className="mt-0.5 text-ink-100">{rec.detectedCondition}</p>
       </div>
+      {rec.hazardId && (
+        <Link
+          to="/vessel/safety"
+          className="flex w-fit items-center gap-1 rounded-sm border border-panel-border bg-panel-raised px-2 py-1.5 text-xs text-info-400 hover:border-info-500/50"
+        >
+          <ArrowUpRight size={12} /> Raised from hazard {rec.hazardId} — open in Safety Intelligence
+        </Link>
+      )}
       <div>
         <div className="text-[11px] uppercase tracking-wide text-ink-500">Recommended Response</div>
         <p className="mt-0.5 text-ink-100">{rec.recommendedResponse}</p>

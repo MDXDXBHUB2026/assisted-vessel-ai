@@ -1,4 +1,4 @@
-import type { RequiredAuthority, RiskLevel, SafetyValidationResult, SystemHealthSummary, VesselSnapshot } from '@/types'
+import type { HazardCategory, RequiredAuthority, RiskLevel, SafetyValidationResult, SystemHealthSummary, VesselSnapshot } from '@/types'
 import { assistanceLevelRank, authorityRank, isRequiredAuthority, isVesselAuthority, riskLevelRank } from '@/types'
 import { assessOdd } from './oddEngine'
 
@@ -7,6 +7,16 @@ export interface ValidationInput {
   snapshot: VesselSnapshot
   riskLevel: RiskLevel
   requiredAuthority: RequiredAuthority
+  /** See `assessOdd` — categories with an open, intolerable-band hazard. Defaults to none. */
+  activeHazardCategories?: HazardCategory[]
+  /**
+   * The category of the specific hazard this recommendation was generated from, if any.
+   * `functionId`'s declared `hazardSensitiveCategories` may not include this category — the two
+   * are independent choices — so this recommendation's own hazard-derived check (below) must not
+   * rely solely on the function's declared sensitivity to catch a recommendation whose own
+   * originating hazard is open and intolerable.
+   */
+  originatingHazardCategory?: HazardCategory
 }
 
 /** A check whose failure means the recommendation must never be presented as executable. */
@@ -32,8 +42,8 @@ const BLOCKING_CHECKS = [
  * A check hardcoded to pass is worse than no check: it renders to the operator as validated.
  */
 export function validateRecommendation(input: ValidationInput): SafetyValidationResult {
-  const { functionId, snapshot, riskLevel, requiredAuthority } = input
-  const odd = assessOdd(functionId, snapshot)
+  const { functionId, snapshot, riskLevel, requiredAuthority, activeHazardCategories = [], originatingHazardCategory } = input
+  const odd = assessOdd(functionId, snapshot, activeHazardCategories)
 
   const checks: SafetyValidationResult['checks'] = []
 
@@ -120,19 +130,51 @@ export function validateRecommendation(input: ValidationInput): SafetyValidation
       : 'Source system data is current and complete.',
   })
 
-  // 8. Risk-appropriate authority. Severe risk requires the Master. High or severe risk requires
+  // 8. Hazard-derived envelope constraint (§6 of docs/safety-intelligence-specification.md). An
+  //    open, intolerable-band hazard in a category this function is sensitive to is folded into
+  //    the ODD as an ordinary outside-envelope parameter (check 4 above already fails for it via
+  //    `odd.status`), but it is also surfaced as its own named check so it is independently
+  //    traceable in the audit trail and cannot be missed inside a longer "outside envelope" list.
+  const hazardParam = odd.parameters.find((p) => p.key === 'safetyHazard')
+  //    A recommendation carrying its own `originatingHazardCategory` is checked against that
+  //    category directly, independent of whether `functionId` happens to declare sensitivity to
+  //    it — the recommendation exists BECAUSE of that specific hazard, so its own check must fail
+  //    while that hazard remains open and intolerable, regardless of which function's ODD it uses
+  //    for the rest of this validation.
+  const originatingHazardStillOpen = originatingHazardCategory !== undefined && activeHazardCategories.includes(originatingHazardCategory)
+  const hazardCheckPassed = originatingHazardStillOpen ? false : hazardParam ? hazardParam.status !== 'outside' : true
+  checks.push({
+    label: 'Not constrained by an active intolerable safety hazard',
+    passed: hazardCheckPassed,
+    detail: originatingHazardStillOpen
+      ? `This recommendation was raised from an open, intolerable-band (RI 8-11) hazard in the ${originatingHazardCategory} category, which remains open.`
+      : hazardParam
+        ? hazardParam.detail
+        : 'This function declares no hazard-category sensitivity.',
+  })
+
+  // 9. Risk-appropriate authority. Severe risk requires the Master. High or severe risk requires
   //    an onboard vessel authority — SHORE-003 requires that shore guidance never removes
   //    operational authority from the vessel, so a shore role can never be the authorising
   //    party for a high-consequence onboard action.
   const highConsequence = riskLevelRank(riskLevel) >= riskLevelRank('high')
-  //    Severe risk requires a SENIOR vessel authority (Master or Chief Engineer), matching the
-  //    authority model in docs/conops.md section 3. High risk requires any onboard vessel
-  //    authority. Officer-of-the-watch remains the correct authority for a high-risk collision
-  //    advisory, so seniority is not raised beyond what the ConOps actually states.
+  //    A hazard-constrained recommendation is raised to the same senior-authority bar as severe
+  //    risk (ISM 5.2's Master's-overriding-authority pattern already used in
+  //    `decision-engine/hazardLifecycle.ts`'s intolerable-band gate). BLOCKING here, rather than
+  //    only escalating the verdict, is the proportionate response: blocking removes the
+  //    recommendation from action entirely, which is wrong for e.g. a collision advisory that
+  //    should stay actionable at oversight level, but is right for whether a junior authority can
+  //    be the one who signs off on it.
+  const hazardConstrained = hazardParam?.status === 'outside' || originatingHazardStillOpen
+  //    Severe risk (or a hazard-constrained recommendation) requires a SENIOR vessel authority
+  //    (Master or Chief Engineer), matching the authority model in docs/conops.md section 3. High
+  //    risk requires any onboard vessel authority. Officer-of-the-watch remains the correct
+  //    authority for a high-risk collision advisory, so seniority is not raised beyond what the
+  //    ConOps actually states outside of these two cases.
   const authorityAdequate =
     !authorityValid
       ? false
-      : riskLevel === 'severe'
+      : riskLevel === 'severe' || hazardConstrained
         ? isVesselAuthority(requiredAuthority) && authorityRank(requiredAuthority) >= authorityRank('chief_engineer')
         : highConsequence
           ? isVesselAuthority(requiredAuthority)
@@ -143,9 +185,11 @@ export function validateRecommendation(input: ValidationInput): SafetyValidation
     detail:
       riskLevel === 'severe'
         ? 'Severe-risk recommendations require a senior vessel authority (Master or Chief Engineer) and are never auto-executed.'
-        : highConsequence
-          ? 'High-risk recommendations require an onboard vessel authority; shore roles are advisory only.'
-          : 'Risk level does not require senior authority gating.',
+        : hazardConstrained
+          ? 'Constrained by an open, intolerable-band safety hazard: requires a senior vessel authority (Master or Chief Engineer), per ISM 5.2.'
+          : highConsequence
+            ? 'High-risk recommendations require an onboard vessel authority; shore roles are advisory only.'
+            : 'Risk level does not require senior authority gating.',
   })
 
   const failed = checks.filter((c) => !c.passed)

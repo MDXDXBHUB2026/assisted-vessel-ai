@@ -1,11 +1,13 @@
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 import { validateRecommendation } from './validate'
-import { assessOdd } from './oddEngine'
+import { assessOdd, assessAllOdd } from './oddEngine'
 import { ASSISTED_FUNCTIONS } from './oddFunctions'
 import { buildBaselineSnapshot } from '@/simulation/baseline'
-import type { OperationalMode, RequiredAuthority, RiskLevel, VesselSnapshot } from '@/types'
+import type { HazardCategory, OperationalMode, RequiredAuthority, RiskLevel, VesselSnapshot } from '@/types'
 import { assistanceLevelRank, isVesselAuthority, REQUIRED_AUTHORITIES, riskLevelRank } from '@/types'
+
+const HAZARD_CATEGORIES: HazardCategory[] = ['navigation', 'machinery', 'cargo', 'personnel', 'environmental', 'security']
 
 /**
  * Property-based verification of the safety layer.
@@ -46,6 +48,7 @@ interface Conditions {
   shoreSyncLatencySec: number
   engineAvailability: number
   commsAvailability: number
+  activeHazardCategories: HazardCategory[]
 }
 
 const conditionsArb: fc.Arbitrary<Conditions> = fc.record({
@@ -62,6 +65,7 @@ const conditionsArb: fc.Arbitrary<Conditions> = fc.record({
   shoreSyncLatencySec: fc.double({ min: 1, max: 90, noNaN: true }),
   engineAvailability: fc.double({ min: 0, max: 100, noNaN: true }),
   commsAvailability: fc.double({ min: 0, max: 100, noNaN: true }),
+  activeHazardCategories: fc.array(fc.constantFrom(...HAZARD_CATEGORIES), { maxLength: 3 }),
 })
 
 function availabilityStatus(percent: number): 'ok' | 'degraded' | 'stale' | 'unavailable' {
@@ -114,8 +118,8 @@ describe('safety engine — invariants that must hold across the whole input spa
     fc.assert(
       fc.property(conditionsArb, functionIdArb, riskArb, authorityArb, (c, functionId, riskLevel, requiredAuthority) => {
         const snapshot = snapshotFrom(c)
-        const a = validateRecommendation({ functionId, snapshot, riskLevel, requiredAuthority })
-        const b = validateRecommendation({ functionId, snapshot, riskLevel, requiredAuthority })
+        const a = validateRecommendation({ functionId, snapshot, riskLevel, requiredAuthority, activeHazardCategories: c.activeHazardCategories })
+        const b = validateRecommendation({ functionId, snapshot, riskLevel, requiredAuthority, activeHazardCategories: c.activeHazardCategories })
         expect(b).toEqual(a)
       }),
       RUNS,
@@ -125,7 +129,7 @@ describe('safety engine — invariants that must hold across the whole input spa
   it('SAFE-103: always returns exactly one of the three declared verdicts', () => {
     fc.assert(
       fc.property(conditionsArb, functionIdArb, riskArb, authorityArb, (c, functionId, riskLevel, requiredAuthority) => {
-        const { verdict } = validateRecommendation({ functionId, snapshot: snapshotFrom(c), riskLevel, requiredAuthority })
+        const { verdict } = validateRecommendation({ functionId, snapshot: snapshotFrom(c), riskLevel, requiredAuthority, activeHazardCategories: c.activeHazardCategories })
         expect(['passed', 'conditional', 'blocked']).toContain(verdict)
       }),
       RUNS,
@@ -135,7 +139,7 @@ describe('safety engine — invariants that must hold across the whole input spa
   it('SAFE-102: PASSED requires every check to pass — a verdict can never be more permissive than its own evidence', () => {
     fc.assert(
       fc.property(conditionsArb, functionIdArb, riskArb, authorityArb, (c, functionId, riskLevel, requiredAuthority) => {
-        const result = validateRecommendation({ functionId, snapshot: snapshotFrom(c), riskLevel, requiredAuthority })
+        const result = validateRecommendation({ functionId, snapshot: snapshotFrom(c), riskLevel, requiredAuthority, activeHazardCategories: c.activeHazardCategories })
         if (result.verdict === 'passed') {
           expect(result.checks.every((check) => check.passed)).toBe(true)
           expect(result.reason).toBeUndefined()
@@ -148,7 +152,7 @@ describe('safety engine — invariants that must hold across the whole input spa
   it('SAFE-002: a verdict other than PASSED always names a reason', () => {
     fc.assert(
       fc.property(conditionsArb, functionIdArb, riskArb, authorityArb, (c, functionId, riskLevel, requiredAuthority) => {
-        const result = validateRecommendation({ functionId, snapshot: snapshotFrom(c), riskLevel, requiredAuthority })
+        const result = validateRecommendation({ functionId, snapshot: snapshotFrom(c), riskLevel, requiredAuthority, activeHazardCategories: c.activeHazardCategories })
         if (result.verdict !== 'passed') {
           expect(result.reason).toBeTruthy()
         }
@@ -161,8 +165,8 @@ describe('safety engine — invariants that must hold across the whole input spa
     fc.assert(
       fc.property(conditionsArb, functionIdArb, riskArb, authorityArb, (c, functionId, riskLevel, requiredAuthority) => {
         const snapshot = snapshotFrom(c)
-        const odd = assessOdd(functionId, snapshot)
-        const result = validateRecommendation({ functionId, snapshot, riskLevel, requiredAuthority })
+        const odd = assessOdd(functionId, snapshot, c.activeHazardCategories)
+        const result = validateRecommendation({ functionId, snapshot, riskLevel, requiredAuthority, activeHazardCategories: c.activeHazardCategories })
         if (odd.status === 'outside') {
           expect(result.verdict).not.toBe('passed')
         }
@@ -175,9 +179,9 @@ describe('safety engine — invariants that must hold across the whole input spa
     fc.assert(
       fc.property(conditionsArb, functionIdArb, riskArb, authorityArb, (c, functionId, riskLevel, requiredAuthority) => {
         const snapshot = snapshotFrom(c)
-        const odd = assessOdd(functionId, snapshot)
+        const odd = assessOdd(functionId, snapshot, c.activeHazardCategories)
         const modeParam = odd.parameters.find((p) => p.key === 'operationalMode')!
-        const result = validateRecommendation({ functionId, snapshot, riskLevel, requiredAuthority })
+        const result = validateRecommendation({ functionId, snapshot, riskLevel, requiredAuthority, activeHazardCategories: c.activeHazardCategories })
         if (modeParam.status === 'outside') {
           expect(result.verdict).toBe('blocked')
         }
@@ -190,7 +194,7 @@ describe('safety engine — invariants that must hold across the whole input spa
     fc.assert(
       fc.property(conditionsArb, functionIdArb, authorityArb, (c, functionId, requiredAuthority) => {
         fc.pre(!isVesselAuthority(requiredAuthority))
-        const result = validateRecommendation({ functionId, snapshot: snapshotFrom(c), riskLevel: 'high', requiredAuthority })
+        const result = validateRecommendation({ functionId, snapshot: snapshotFrom(c), riskLevel: 'high', requiredAuthority, activeHazardCategories: c.activeHazardCategories })
         expect(result.verdict).toBe('blocked')
       }),
       RUNS,
@@ -200,7 +204,7 @@ describe('safety engine — invariants that must hold across the whole input spa
   it('severe risk is never actionable below Chief Engineer seniority', () => {
     fc.assert(
       fc.property(conditionsArb, functionIdArb, authorityArb, (c, functionId, requiredAuthority) => {
-        const result = validateRecommendation({ functionId, snapshot: snapshotFrom(c), riskLevel: 'severe', requiredAuthority })
+        const result = validateRecommendation({ functionId, snapshot: snapshotFrom(c), riskLevel: 'severe', requiredAuthority, activeHazardCategories: c.activeHazardCategories })
         const senior = requiredAuthority === 'master' || requiredAuthority === 'chief_engineer'
         if (!senior) expect(result.verdict).toBe('blocked')
       }),
@@ -211,7 +215,7 @@ describe('safety engine — invariants that must hold across the whole input spa
   it('the declared assistance ceiling is never exceeded, under any conditions', () => {
     fc.assert(
       fc.property(conditionsArb, functionIdArb, (c, functionId) => {
-        const odd = assessOdd(functionId, snapshotFrom(c))
+        const odd = assessOdd(functionId, snapshotFrom(c), c.activeHazardCategories)
         expect(assistanceLevelRank(odd.availableAssistanceLevel)).toBeLessThanOrEqual(assistanceLevelRank(odd.maxAssistanceLevel))
         // ASSIST-101: no function in this POC ever reaches L4.
         expect(assistanceLevelRank(odd.availableAssistanceLevel)).toBeLessThan(assistanceLevelRank('L4'))
@@ -225,8 +229,10 @@ describe('safety engine — invariants that must hold across the whole input spa
       fc.property(conditionsArb, functionIdArb, (c, functionId) => {
         const good = snapshotFrom({ ...c, visibilityNm: 12, waveHeightM: 0, gnssConfidence: 100, gnssAvailable: true })
         const bad = snapshotFrom({ ...c, visibilityNm: 0.2, waveHeightM: 10, gnssConfidence: 0, gnssAvailable: false })
-        const levelGood = assessOdd(functionId, good).availableAssistanceLevel
-        const levelBad = assessOdd(functionId, bad).availableAssistanceLevel
+        // Same hazard categories on both sides: a hazard-derived constraint must not itself
+        // create an "improvement" from degrading the envelope — it applies identically either way.
+        const levelGood = assessOdd(functionId, good, c.activeHazardCategories).availableAssistanceLevel
+        const levelBad = assessOdd(functionId, bad, c.activeHazardCategories).availableAssistanceLevel
         expect(assistanceLevelRank(levelBad)).toBeLessThanOrEqual(assistanceLevelRank(levelGood))
       }),
       RUNS,
@@ -238,7 +244,7 @@ describe('safety engine — invariants that must hold across the whole input spa
       fc.property(conditionsArb, riskArb, authorityArb, (c, riskLevel, requiredAuthority) => {
         // shore_sync_assistance requires the communications area; kill that feed outright.
         const snapshot = snapshotFrom({ ...c, operationalMode: 'open_sea', commsAvailability: 0 })
-        const result = validateRecommendation({ functionId: 'shore_sync_assistance', snapshot, riskLevel, requiredAuthority })
+        const result = validateRecommendation({ functionId: 'shore_sync_assistance', snapshot, riskLevel, requiredAuthority, activeHazardCategories: c.activeHazardCategories })
         expect(result.verdict).toBe('blocked')
       }),
       RUNS,
@@ -248,7 +254,7 @@ describe('safety engine — invariants that must hold across the whole input spa
   it('every check carries a non-empty label and detail — the operator is never shown a blank check', () => {
     fc.assert(
       fc.property(conditionsArb, functionIdArb, riskArb, authorityArb, (c, functionId, riskLevel, requiredAuthority) => {
-        const result = validateRecommendation({ functionId, snapshot: snapshotFrom(c), riskLevel, requiredAuthority })
+        const result = validateRecommendation({ functionId, snapshot: snapshotFrom(c), riskLevel, requiredAuthority, activeHazardCategories: c.activeHazardCategories })
         expect(result.checks.length).toBeGreaterThan(0)
         for (const check of result.checks) {
           expect(check.label.length).toBeGreaterThan(0)
@@ -262,7 +268,7 @@ describe('safety engine — invariants that must hold across the whole input spa
   it('ODD margin fractions are always a finite value in [0, 1]', () => {
     fc.assert(
       fc.property(conditionsArb, functionIdArb, (c, functionId) => {
-        for (const p of assessOdd(functionId, snapshotFrom(c)).parameters) {
+        for (const p of assessOdd(functionId, snapshotFrom(c), c.activeHazardCategories).parameters) {
           expect(Number.isFinite(p.marginFraction)).toBe(true)
           expect(p.marginFraction).toBeGreaterThanOrEqual(0)
           expect(p.marginFraction).toBeLessThanOrEqual(1)
@@ -275,7 +281,7 @@ describe('safety engine — invariants that must hold across the whole input spa
   it('an outside-limit parameter always reports zero margin, and vice versa is never true for an inside one', () => {
     fc.assert(
       fc.property(conditionsArb, functionIdArb, (c, functionId) => {
-        for (const p of assessOdd(functionId, snapshotFrom(c)).parameters) {
+        for (const p of assessOdd(functionId, snapshotFrom(c), c.activeHazardCategories).parameters) {
           if (p.status === 'outside') expect(p.marginFraction).toBe(0)
           if (p.status === 'inside') expect(p.marginFraction).toBeGreaterThan(0)
         }
@@ -308,7 +314,7 @@ describe('safety engine — invariants that must hold across the whole input spa
     const everFailed = new Map<string, boolean>()
     fc.assert(
       fc.property(conditionsArb, functionIdArb, riskArb, authorityArb, (c, functionId, riskLevel, requiredAuthority) => {
-        const result = validateRecommendation({ functionId, snapshot: snapshotFrom(c), riskLevel, requiredAuthority })
+        const result = validateRecommendation({ functionId, snapshot: snapshotFrom(c), riskLevel, requiredAuthority, activeHazardCategories: c.activeHazardCategories })
         for (const check of result.checks) {
           everFailed.set(check.label, (everFailed.get(check.label) ?? false) || !check.passed)
         }
@@ -340,11 +346,49 @@ describe('safety engine — invariants that must hold across the whole input spa
     expect(Object.keys(DEFENSIVE_CHECKS).length).toBeLessThanOrEqual(2)
   })
 
+  it('SAFETY-HAZARD-001 (§6): an active intolerable-band hazard category always fires the safetyHazard check for a function sensitive to it', () => {
+    // The hole this closes: previously there was no hazard input to the ODD at all, so an active
+    // critical safety hazard could not constrain any assisted function. Asserted directly against
+    // the `safetyHazard` parameter, not against `availableAssistanceLevel`: an assistance-level
+    // differential (with vs. without the hazard) is confounded at the L0 floor — random
+    // `conditionsArb` draws can already put a hazard-sensitive function at L0 for an unrelated
+    // reason (mode, sensors, comms), and the hazard cannot push it any lower, which made a
+    // level-differential version of this test fail on those draws even though the hazard input
+    // was being applied correctly. Checking the parameter itself is not floor-confounded and is
+    // not satisfiable by chance from unrelated conditions the way an un-differenced level-ceiling
+    // assertion would be.
+    fc.assert(
+      fc.property(conditionsArb, fc.constantFrom(...HAZARD_CATEGORIES), (c, category) => {
+        const withHazard = assessAllOdd(snapshotFrom(c), [category])
+        const sensitiveAssessments = withHazard.filter((a) => {
+          const fn = ASSISTED_FUNCTIONS.find((f) => f.id === a.functionId)
+          return fn !== undefined && fn.hazardSensitiveCategories.includes(category)
+        })
+        expect(sensitiveAssessments.length).toBeGreaterThan(0)
+        const hazardParamFired = sensitiveAssessments.some((a) => a.parameters.find((p) => p.key === 'safetyHazard')?.status === 'outside')
+        expect(hazardParamFired).toBe(true)
+      }),
+      RUNS,
+    )
+  })
+
+  it('every hazard category maps to at least one real assisted function, clamped to at most L1 on an otherwise nominal snapshot', () => {
+    const nominal = buildBaselineSnapshot()
+    for (const category of HAZARD_CATEGORIES) {
+      const sensitiveFns = ASSISTED_FUNCTIONS.filter((f) => f.hazardSensitiveCategories.includes(category))
+      expect(sensitiveFns.length, `no assisted function declares sensitivity to hazard category "${category}"`).toBeGreaterThan(0)
+      for (const fn of sensitiveFns) {
+        const odd = assessOdd(fn.id, nominal, [category])
+        expect(assistanceLevelRank(odd.availableAssistanceLevel)).toBeLessThanOrEqual(assistanceLevelRank('L1'))
+      }
+    }
+  })
+
   it('all three verdicts are reachable from states the system can actually produce', () => {
     const seen = new Set<string>()
     fc.assert(
       fc.property(conditionsArb, functionIdArb, riskArb, authorityArb, (c, functionId, riskLevel, requiredAuthority) => {
-        seen.add(validateRecommendation({ functionId, snapshot: snapshotFrom(c), riskLevel, requiredAuthority }).verdict)
+        seen.add(validateRecommendation({ functionId, snapshot: snapshotFrom(c), riskLevel, requiredAuthority, activeHazardCategories: c.activeHazardCategories }).verdict)
       }),
       { numRuns: 3000 },
     )

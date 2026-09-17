@@ -72,7 +72,23 @@ export function buildVesselOperationalState(snapshot: VesselSnapshot): VesselOpe
       shoreSyncLatencySec: measured(snapshot.communications.shoreSyncLatencySec, 's', t, 'Ship-Shore Link', snapshot.communications.satelliteConfidence, satQ, statusFromConfidence(snapshot.communications.satelliteConfidence, snapshot.communications.satelliteLinkUp)),
     },
     dataQuality: {
-      overallConfidencePercent: measured(Math.round(Math.min(snapshot.navigation.gnssConfidence, snapshot.communications.satelliteConfidence, snapshot.systemHealth.find((s) => s.area === 'main_engine')?.confidence ?? 100)), '%', t, 'Sensor Confidence Fusion', 90, 'high', 'ok'),
+      // Derived from feed AVAILABILITY (dataAvailabilityPercent), never from analytical/sensor
+      // CONFIDENCE — the same H2 inversion fixed in simulation/health.ts. Confidence is a
+      // measurement-confidence signal that can legitimately be low on a perfectly healthy feed
+      // (e.g. early in a rolling window) and RISES as a machinery fault develops (a
+      // condition-monitoring model grows more certain as the anomaly becomes clearer), so gating
+      // "data quality" on it inverts the meaning: a healthy engine could report LOW and a
+      // degrading one HIGH. `dataAvailabilityPercent` already measures whether the underlying
+      // feed itself is live and plausible, independent of what it says.
+      overallConfidencePercent: measured(
+        Math.round(Math.min(...['navigation', 'communications', 'main_engine'].map((area) => snapshot.systemHealth.find((s) => s.area === area)?.dataAvailabilityPercent ?? 100))),
+        '%',
+        t,
+        'Source Feed Availability',
+        90,
+        'high',
+        'ok',
+      ),
     },
   }
 }

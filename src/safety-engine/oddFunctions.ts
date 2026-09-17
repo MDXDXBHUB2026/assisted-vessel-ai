@@ -1,4 +1,4 @@
-import type { AssistanceLevel, OperationalMode, VesselSystemArea } from '@/types'
+import type { AssistanceLevel, HazardCategory, OperationalMode, VesselSystemArea } from '@/types'
 
 export interface AssistedFunctionDefinition {
   id: string
@@ -26,6 +26,15 @@ export interface AssistedFunctionDefinition {
    * link was down.
    */
   requiredSourceAreas: VesselSystemArea[]
+  /**
+   * Hazard categories (see `Hazard.category`) whose presence in the intolerable band (RI 8-11,
+   * open) constrains this function — flooding constrains different functions than a cargo
+   * hazard. Checked by `assessOdd` via `activeIntolerableHazardCategories`
+   * (`decision-engine/hazardLifecycle.ts`); an intersection is treated exactly like any other
+   * outside-envelope parameter (clamped to L1). This is the ODD's only hazard input — previously
+   * there was none, so an active critical safety hazard could not constrain any assisted function.
+   */
+  hazardSensitiveCategories: HazardCategory[]
 }
 
 export const ASSISTED_FUNCTIONS: AssistedFunctionDefinition[] = [
@@ -46,6 +55,7 @@ export const ASSISTED_FUNCTIONS: AssistedFunctionDefinition[] = [
     configuredAssistanceLevel: 'L2',
     maxAssistanceLevel: 'L2',
     requiredSourceAreas: ['navigation'],
+    hazardSensitiveCategories: ['navigation', 'personnel', 'security'],
   },
   {
     id: 'voyage_speed_optimisation',
@@ -64,6 +74,7 @@ export const ASSISTED_FUNCTIONS: AssistedFunctionDefinition[] = [
     configuredAssistanceLevel: 'L3',
     maxAssistanceLevel: 'L3',
     requiredSourceAreas: ['navigation', 'fuel_energy', 'main_engine'],
+    hazardSensitiveCategories: ['navigation', 'machinery', 'environmental'],
   },
   {
     id: 'machinery_anomaly_detection',
@@ -82,6 +93,7 @@ export const ASSISTED_FUNCTIONS: AssistedFunctionDefinition[] = [
     configuredAssistanceLevel: 'L2',
     maxAssistanceLevel: 'L2',
     requiredSourceAreas: ['main_engine'],
+    hazardSensitiveCategories: ['machinery'],
   },
   {
     id: 'predictive_maintenance',
@@ -100,6 +112,7 @@ export const ASSISTED_FUNCTIONS: AssistedFunctionDefinition[] = [
     configuredAssistanceLevel: 'L2',
     maxAssistanceLevel: 'L2',
     requiredSourceAreas: ['main_engine', 'auxiliary_machinery'],
+    hazardSensitiveCategories: ['machinery'],
   },
   {
     id: 'reefer_monitoring',
@@ -118,6 +131,7 @@ export const ASSISTED_FUNCTIONS: AssistedFunctionDefinition[] = [
     configuredAssistanceLevel: 'L2',
     maxAssistanceLevel: 'L2',
     requiredSourceAreas: ['cargo_reefer', 'electrical_power'],
+    hazardSensitiveCategories: ['cargo', 'environmental'],
   },
   {
     id: 'shore_sync_assistance',
@@ -136,6 +150,7 @@ export const ASSISTED_FUNCTIONS: AssistedFunctionDefinition[] = [
     configuredAssistanceLevel: 'L1',
     maxAssistanceLevel: 'L2',
     requiredSourceAreas: ['communications'],
+    hazardSensitiveCategories: ['personnel', 'security'],
   },
 ]
 

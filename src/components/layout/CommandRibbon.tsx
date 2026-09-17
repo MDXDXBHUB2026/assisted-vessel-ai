@@ -1,9 +1,10 @@
 import { Link } from 'react-router-dom'
 import { Pause, Play, FastForward, Ship } from 'lucide-react'
 import { useSimulationStore } from '@/store/simulationStore'
-import { OPERATIONAL_MODE_LABELS, assistanceLevelRank, worstHealth, type AssistanceLevel } from '@/types'
+import { OPERATIONAL_MODE_LABELS } from '@/types'
 import { formatUtc } from '@/utils/format'
-import { assessAllOdd } from '@/safety-engine/oddEngine'
+import { assessAllOdd, vesselAssistanceLevelSummary } from '@/safety-engine/oddEngine'
+import { activeIntolerableHazardCategories } from '@/decision-engine/hazardLifecycle'
 import { buildVesselOperationalState } from '@/simulation/operationalState'
 import clsx from 'clsx'
 
@@ -33,13 +34,17 @@ export function CommandRibbon() {
   const rawAlarms = useSimulationStore((s) => s.rawAlarms)
   const pocMode = useSimulationStore((s) => s.pocMode)
   const adapterStatuses = useSimulationStore((s) => s.adapterStatuses)
+  const hazards = useSimulationStore((s) => s.hazards)
 
   const pendingDecisions = recommendations.filter((r) => r.status === 'awaiting_decision').length
   const activeAlerts = rawAlarms.filter((a) => a.active).length
 
-  const oddAssessments = assessAllOdd(snapshot)
+  const oddAssessments = assessAllOdd(snapshot, activeIntolerableHazardCategories(hazards))
   const worstOdd = oddAssessments.reduce((worst, a) => (a.status === 'outside' ? 'outside' : a.status === 'near_limit' && worst !== 'outside' ? 'near_limit' : worst), 'inside' as 'inside' | 'near_limit' | 'outside')
-  const minAvailableLevel = oddAssessments.reduce<AssistanceLevel>((min, a) => (assistanceLevelRank(a.availableAssistanceLevel) < assistanceLevelRank(min) ? a.availableAssistanceLevel : min), 'L3')
+  // Vessel-side safety-relevant functions only — see vesselAssistanceLevelSummary for why
+  // shore-side monitoring functions are excluded (ALSO FIX 2: this stat was previously pinned
+  // at L1 forever because shore_sync_assistance's configured level is always L1).
+  const vesselAssistance = vesselAssistanceLevelSummary(oddAssessments)
 
   const opState = buildVesselOperationalState(snapshot)
   const dataQualityPct = opState.dataQuality.overallConfidencePercent.value
@@ -79,7 +84,18 @@ export function CommandRibbon() {
         <RibbonStat label="Operating Mode" value={OPERATIONAL_MODE_LABELS[snapshot.operationalMode]} />
         <RibbonStat label="System State" value={snapshot.overallHealth.toUpperCase()} valueClass={HEALTH_COLOR[snapshot.overallHealth]} />
         <RibbonStat label="Operational Envelope" value={worstOdd === 'inside' ? 'INSIDE ODD' : worstOdd === 'near_limit' ? 'NEAR LIMIT' : 'OUTSIDE ODD'} valueClass={ODD_COLOR[worstOdd]} />
-        <RibbonStat label="Assistance Level" value={minAvailableLevel} sub={worstHealth([snapshot.overallHealth]) !== 'healthy' ? 'capped' : undefined} valueClass="text-info-400" />
+        <RibbonStat
+          label="Assistance Level"
+          value={vesselAssistance.level}
+          sub={
+            vesselAssistance.constrainingFunctionLabel
+              ? vesselAssistance.constrainedByHazard
+                ? `Held by open safety hazard: ${vesselAssistance.constrainingFunctionLabel}`
+                : `Limited by ${vesselAssistance.constrainingFunctionLabel}`
+              : 'vessel functions'
+          }
+          valueClass={vesselAssistance.constrainedByHazard ? 'text-critical-400' : 'text-info-400'}
+        />
         <RibbonStat label="Connectivity" value={snapshot.communications.satelliteLinkUp ? 'LINKED' : 'FALLBACK'} valueClass={snapshot.communications.satelliteLinkUp ? 'text-healthy-400' : 'text-critical-400'} />
         <RibbonStat label="Data Quality" value={dataQualityLabel} valueClass={dataQualityLabel === 'HIGH' ? 'text-healthy-400' : dataQualityLabel === 'MEDIUM' ? 'text-warning-400' : 'text-critical-400'} />
         <RibbonStat label="Active Alerts" value={String(activeAlerts)} valueClass={activeAlerts > 0 ? 'text-warning-400' : 'text-healthy-400'} />

@@ -1,4 +1,4 @@
-import type { AnalyticalMethod, EvidenceItem, RequiredAuthority, RiskLevel, VesselSnapshot, VesselSystemArea } from '@/types'
+import type { AnalyticalMethod, EvidenceItem, HazardCategory, RequiredAuthority, RiskLevel, VesselSnapshot, VesselSystemArea } from '@/types'
 import type { MachineryAnalysis } from './machineryAnalytics'
 import { CAUTION_BAND_MULTIPLIER, DEFAULT_TARGET_RISK_LIMITS, type TargetRiskLimits } from './targetRisk'
 
@@ -21,6 +21,15 @@ export interface RecommendationContent {
   potentialConsequence: string
   requiredAuthority: RequiredAuthority
   functionId: string
+  /** Closes the decision chain both ways: the hazard this recommendation was generated from. */
+  hazardId?: string
+  /**
+   * The category of the hazard named by `hazardId`. `functionId` picks a real assisted function's
+   * ODD purely to source an envelope/mode/authority check — it is not necessarily sensitive to
+   * this hazard's own category — so the safety engine checks this field directly against the open
+   * hazard register rather than relying on `functionId`'s declared sensitivities.
+   */
+  originatingHazardCategory?: HazardCategory
 }
 
 export function engineDegradationRecommendation(snapshot: VesselSnapshot, analysis: MachineryAnalysis, severity: number): RecommendationContent {
@@ -168,8 +177,10 @@ export function gnssDegradationRecommendation(gnssConfidence: number): Recommend
   }
 }
 
-export function safetyEventRecommendation(hazardTitle: string): RecommendationContent {
+export function safetyEventRecommendation(hazardTitle: string, hazardId: string, hazardCategory: HazardCategory): RecommendationContent {
   return {
+    hazardId,
+    originatingHazardCategory: hazardCategory,
     vesselFunction: 'safety',
     title: `Safety Hazard Raised — ${hazardTitle}`,
     detectedCondition: `A safety hazard condition has been detected and requires crew acknowledgement and response.`,

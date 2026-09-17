@@ -1,7 +1,9 @@
 import { create } from 'zustand'
-import type { AuditEventKind, OperationalMode, PocExecutionMode, RequiredAuthority, ScenarioId, ShoreCase, ShoreFunction } from '@/types'
+import type { AuditEventKind, Hazard, OperationalMode, PocExecutionMode, RequiredAuthority, ScenarioId, ShoreCase, ShoreFunction } from '@/types'
 import type { TargetRiskLimits } from '@/decision-engine/targetRisk'
 import { assistanceLevelRank, OPERATIONAL_MODE_LABELS } from '@/types'
+import { activeIntolerableHazardCategories, canTransition, HAZARD_ACTION_LABELS, HAZARD_ACTION_PAST_TENSE, HAZARD_STATUS_LABELS, type HazardAction } from '@/decision-engine/hazardLifecycle'
+import { buildRiskAssessment, FREQUENCY_INDEX_MIN } from '@/decision-engine/riskMatrix'
 import { buildInitialSimulationState, type AdapterStatuses, type SimulationState } from '@/simulation/state'
 import { tick } from '@/simulation/engine'
 import { toRelativeRisk } from '@/simulation/navigation'
@@ -55,7 +57,18 @@ interface SimulationStore extends SimulationState {
     role: RequiredAuthority,
   ) => void
 
-  updateHazardStatus: (id: string, status: 'acknowledged' | 'assigned' | 'investigating' | 'escalated' | 'closed', note?: string) => void
+  transitionHazard: (
+    id: string,
+    action: HazardAction,
+    actorRole: RequiredAuthority,
+    details?: {
+      note?: string
+      ownerRole?: RequiredAuthority
+      correctiveActionDescription?: string
+      verificationNote?: string
+      escalatedToRole?: RequiredAuthority
+    },
+  ) => void
 
   setTargetRiskLimits: (limits: TargetRiskLimits) => void
 
@@ -241,12 +254,14 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
     const state = get()
     const auditId = state.nextIdCounter + 1
     const functionId = 'voyage_speed_optimisation'
-    const odd = assessOdd(functionId, state.snapshot)
+    const activeHazardCategories = activeIntolerableHazardCategories(state.hazards)
+    const odd = assessOdd(functionId, state.snapshot, activeHazardCategories)
     const validation = validateRecommendation({
       functionId,
       snapshot: state.snapshot,
       riskLevel: 'medium',
       requiredAuthority: role,
+      activeHazardCategories,
     })
 
     const belowL3 = assistanceLevelRank(odd.availableAssistanceLevel) < assistanceLevelRank('L3')
@@ -455,23 +470,77 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
     }
   },
 
-  updateHazardStatus: (id, status, note) => {
+  /**
+   * The single entry point for every hazard-lifecycle change. It asks `canTransition` — it never
+   * decides legality itself — and always writes an audit event, whether the transition succeeds
+   * or is refused, with the actor's role, a timestamp and any note (ISM 9.1/9.2).
+   */
+  transitionHazard: (id, action, actorRole, details) => {
     const state = get()
-    const auditId = state.nextIdCounter + 1
     const hazard = state.hazards.find((h) => h.id === id)
     if (!hazard) return
+    const check = canTransition(hazard, action, actorRole)
+    const auditId = state.nextIdCounter + 1
+    const timestampIso = state.snapshot.simTimeIso
+    const operatingMode = OPERATIONAL_MODE_LABELS[state.snapshot.operationalMode]
+    const scenarioId = state.activeScenario === 'normal_operations' ? null : state.activeScenario
+
+    if (!check.allowed) {
+      set({
+        nextIdCounter: auditId,
+        auditEvents: [
+          {
+            id: mintId('AUD', auditId),
+            timestampIso,
+            operatingMode,
+            scenarioId,
+            kind: 'hazard_lifecycle',
+            event: `${actorRole.replace(/_/g, ' ')} attempted to ${HAZARD_ACTION_LABELS[action]} hazard "${hazard.title}" — refused: ${check.reason}`,
+            hazardId: hazard.id,
+            responsibleRole: actorRole,
+            outcome: 'refused',
+          },
+          ...state.auditEvents,
+        ],
+      })
+      return
+    }
+
+    let updated: Hazard = { ...hazard, status: check.targetStatus }
+    if (action === 'assign') {
+      updated = { ...updated, owner: { role: details?.ownerRole ?? actorRole, assignedAtIso: timestampIso } }
+    } else if (action === 'record_corrective_action') {
+      // Mitigation credit is earned only once a corrective action is actually recorded — reduce
+      // frequency (not severity: a crew action changes how often it recurs, not the worst-case
+      // outcome) by two index steps, bounded at the FSA minimum.
+      const residualFrequencyIndex = Math.max(FREQUENCY_INDEX_MIN, hazard.initialRisk.frequencyIndex - 2)
+      updated = {
+        ...updated,
+        correctiveAction: { description: details?.correctiveActionDescription?.trim() || 'Corrective action recorded.', recordedAtIso: timestampIso, recordedByRole: actorRole },
+        residualRisk: buildRiskAssessment(residualFrequencyIndex, hazard.initialRisk.severityIndex),
+      }
+    } else if (action === 'verify_effectiveness') {
+      updated = { ...updated, verification: { note: details?.verificationNote?.trim() || 'Effectiveness verified; no recurrence observed.', verifiedAtIso: timestampIso, verifiedByRole: actorRole } }
+    } else if (action === 'escalate') {
+      updated = { ...updated, escalation: { escalatedToRole: details?.escalatedToRole ?? 'master', escalatedAtIso: timestampIso, note: details?.note?.trim() || 'Reported to the Company.', preEscalationStatus: hazard.status } }
+    } else if (action === 'resume') {
+      updated = { ...updated, escalation: undefined }
+    }
+
     set({
       nextIdCounter: auditId,
-      hazards: state.hazards.map((h) => (h.id === id ? { ...h, status } : h)),
+      hazards: state.hazards.map((h) => (h.id === id ? updated : h)),
       auditEvents: [
         {
           id: mintId('AUD', auditId),
-          timestampIso: state.snapshot.simTimeIso,
-          operatingMode: OPERATIONAL_MODE_LABELS[state.snapshot.operationalMode],
-          scenarioId: state.activeScenario === 'normal_operations' ? null : state.activeScenario,
-          kind: 'human_decision',
-          event: `Hazard "${hazard.title}" status set to ${status}.${note ? ` Note: ${note}` : ''}`,
-          outcome: status,
+          timestampIso,
+          operatingMode,
+          scenarioId,
+          kind: 'hazard_lifecycle',
+          event: `${actorRole.replace(/_/g, ' ')} ${HAZARD_ACTION_PAST_TENSE[action]} hazard "${hazard.title}": ${HAZARD_STATUS_LABELS[hazard.status]} -> ${HAZARD_STATUS_LABELS[updated.status]}.${details?.note ? ` Note: ${details.note}` : ''}`,
+          hazardId: hazard.id,
+          responsibleRole: actorRole,
+          outcome: updated.status,
         },
         ...state.auditEvents,
       ],
