@@ -41,7 +41,7 @@ This document records the assumptions underpinning the Assisted Vessel Intellige
 
 A small number of explicitly named technologies were substituted for lighter alternatives, each chosen to keep the demonstrator dependency-lean, fully static, and honest about what it is showing:
 
-18. **No MapLibre GL / deck.gl.** The vessel's geography is entirely synthetic (fictional route, fictional targets); a real-world WebGL basemap would need live map-tile infrastructure and would misleadingly suggest the vessel is operating in a real, identifiable location. Instead, `NavigationCanvas` is a bespoke Canvas2D renderer with its own requestAnimationFrame interpolation loop, historical/predicted tracks, CPA/TCPA geometry, layer toggles and view modes (North Up / Course Up / Vessel Centred) — the same functional requirements, without a basemap dependency or an implied real position.
+18. **No MapLibre GL / deck.gl.** A real-world WebGL basemap would need live map-tile infrastructure, and would let a viewer directly correlate the synthetic picture against real coastlines, ports and traffic separation schemes in a way a bespoke renderer does not. Instead, `NavigationCanvas` is a bespoke Canvas2D renderer with its own requestAnimationFrame interpolation loop, historical/predicted tracks, CPA/TCPA geometry, layer toggles, true/relative motion and orientation modes — the same functional requirements, without a basemap dependency. Own ship's baseline position (`data/route.ts`) sits in the Singapore Strait approaches (~1.3°N, 103.85°E), chosen deliberately for plausible container-traffic density rather than for anonymity — the fictional vessel, targets, cargo and events are the synthetic part, not the general area of ocean.
 19. **No React Three Fiber / Three.js 3D Digital Twin.** The Digital Twin is a 2D functional-system topology (`VesselTopology`) showing the eight monitored system areas and their power/monitoring relationships, with click-through condition/trend/evidence detail. A full 3D vessel model was judged to add rendering-pipeline risk and build time disproportionate to its incremental value over a clear, fast, accessible 2D topology for this POC.
 20. **Apache ECharts** is used for genuine streaming engineering telemetry (`StreamingChart`) where the brief specifically asked for it; the existing lightweight Recharts-based `Sparkline` is retained for a few small in-context trend indicators. Standardising on a single charting library is a reasonable follow-up cleanup, noted as a remaining item.
 21. Machinery and voyage models remain the illustrative approximations described in item 5 above — ECharts and the new multivariate (cylinder-spread) signal change how the analytics are *computed and displayed* (rolling history, slope, persistence, spread), not the fact that they are synthetic, uncalibrated models.
@@ -71,3 +71,23 @@ A small number of explicitly named technologies were substituted for lighter alt
     runtime-validated and range-checked before use, and a failed validation is treated as a
     network failure. There is still no transport authentication or integrity protection — a
     production realisation would authenticate backend-to-backend, never from the browser.
+27. **The navigation operating picture follows IMO MSC.192(79), SN.1/Circ.243/Rev.2 and IEC 62288
+    conventions (range scales, range rings, true/relative motion, symbology, trails, CPA/TCPA
+    presentation) for legibility and credibility only.** It renders synthetic positions from a
+    client-side simulation, is not type-approved radar or ECDIS equipment, and must never be used
+    for navigation. Conformance to these standards is stylistic, not certified — see
+    `docs/navigation-display-specification.md`.
+28. **CPA/TCPA "dangerous"/"caution" classification (`src/decision-engine/targetRisk.ts`) uses one
+    operator-settable limit pair everywhere it is consumed** — the canvas, the CPA alarm
+    (`NAV_CPA_WARNING`), and the navigation risk badge all read `TargetVessel.relativeRisk`, which
+    is derived from that same classification. **The scripted `collision_risk` demo target does not
+    reach the joint CPA-and-TCPA "dangerous" or "caution" tier within a practical demo runtime**:
+    its steering continuously re-aims at a point ahead of own ship rather than holding a fixed
+    collision course, so its CPA can close to near-zero for a long time while its TCPA stays large.
+    The alarm and badge are therefore correctly wired but will not visibly engage during that
+    scripted scenario. The collision-risk recommendation (`collisionRiskRecommendation`) is
+    deliberately gated and graded on CPA alone (anchored to the same operator `cpaLimitNm`, not an
+    independent constant) rather than the joint classification, so the demo still produces a
+    recommendation; its `riskLevel` should not be read as agreeing with `relativeRisk` for this
+    scenario. Making the demo scenario itself produce a genuine joint-converging encounter is
+    unresolved follow-up work, not attempted here.

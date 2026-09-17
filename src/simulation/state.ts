@@ -20,6 +20,7 @@ import { buildBaselineVoyagePlan } from '@/data/voyagePlan'
 import { buildBaselineFleet } from '@/data/fleet'
 import { buildInitialTelemetryHistory, type TelemetryHistoryState } from './telemetryHistory'
 import { analyseMainEngine, type MachineryAnalysis } from '@/decision-engine/machineryAnalytics'
+import { DEFAULT_TARGET_RISK_LIMITS, type TargetRiskLimits } from '@/decision-engine/targetRisk'
 
 export interface AdapterStatuses {
   telemetry: AdapterConnectionState
@@ -82,6 +83,16 @@ export interface SimulationState {
   /** Records "queued" while the shore link is down, illustrating store-and-forward recovery. */
   syncQueueCount: number
   demoVoyage: DemoVoyageState
+
+  /**
+   * The single operator-settable CPA/TCPA limit pair (MSC.192(79): "the preset CPA/TCPA limits
+   * applied to targets from radar and AIS should be identical"). Every consumer of target risk —
+   * the navigation canvas, the CPA alarm, the collision-risk recommendation gate, and the
+   * navigation risk badge — reads this one value so they can never disagree with each other.
+   * Store state rather than component state, so it survives a remount of the navigation panel and
+   * can be recorded in the audit trail.
+   */
+  targetRiskLimits: TargetRiskLimits
 }
 
 /**
@@ -141,5 +152,6 @@ export function buildInitialSimulationState(startIdCounter = 1, startShoreCaseNu
     ownTrack: [snapshot.navigation.position],
     syncQueueCount: 0,
     demoVoyage: { active: false, phaseIndex: 0, phaseElapsedMinutes: 0 },
+    targetRiskLimits: DEFAULT_TARGET_RISK_LIMITS,
   }
 }

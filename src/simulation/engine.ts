@@ -1,4 +1,4 @@
-import type { AuditEvent, HealthLevel, Hazard, Recommendation } from '@/types'
+import type { AuditEvent, HealthLevel, Hazard, Recommendation, TargetVessel } from '@/types'
 import { OPERATIONAL_MODE_LABELS } from '@/types'
 import type { SimulationState } from './state'
 import { clamp, mulberry32, stepTowards } from '@/utils/random'
@@ -20,6 +20,7 @@ import {
   safetyEventRecommendation,
   type RecommendationContent,
 } from '@/decision-engine/builders'
+import { CAUTION_BAND_MULTIPLIER } from '@/decision-engine/targetRisk'
 
 const REEFER_EXCURSION_INDEX = 3
 
@@ -151,9 +152,14 @@ export function tick(prev: SimulationState, dtMinutesBase: number): SimulationSt
     collisionScenarioActive: prev.activeScenario === 'collision_risk',
     severity,
     dtMinutes,
+    riskLimits: prev.targetRiskLimits,
   })
   const collisionHighRisk = targetVessels.some((t) => t.relativeRisk === 'high')
-  const riskiestTarget = [...targetVessels].sort((a, b) => a.cpaNm - b.cpaNm)[0]
+  // Rank by relativeRisk severity first, not raw CPA: a target with a tiny historical CPA that has
+  // already opened (negative TCPA) classifies 'low' and must not outrank a genuinely closing target
+  // with a larger but still-converging CPA — sorting on cpaNm alone previously let it do exactly that.
+  const relativeRiskRank: Record<TargetVessel['relativeRisk'], number> = { high: 2, medium: 1, low: 0 }
+  const riskiestTarget = [...targetVessels].sort((a, b) => relativeRiskRank[b.relativeRisk] - relativeRiskRank[a.relativeRisk] || a.cpaNm - b.cpaNm)[0]
 
   // --- assemble snapshot ---
   const simTimeIso = new Date(new Date(prev.snapshot.simTimeIso).getTime() + dtMinutes * 60_000).toISOString()
@@ -334,10 +340,18 @@ export function tick(prev: SimulationState, dtMinutesBase: number): SimulationSt
 
   maybeFire('engine_degradation_rec', prev.activeScenario === 'engine_degradation' && severity > 0.45, () => engineDegradationRecommendation(snapshot, machineryAnalysis, severity))
 
+  // The scripted collision_risk target continuously re-aims at a point ahead of own ship rather
+  // than holding a fixed collision course, so its CPA can close to near-zero for a long time
+  // before its TCPA is ever simultaneously small (see targetRisk.test.ts and engine.scenarios.test
+  // for the actual behaviour) — requiring classifyTargetRisk's joint CPA-and-TCPA "dangerous"/
+  // "caution" tiers here would mean this recommendation never fires in the built-in demo. The gate
+  // therefore stays CPA-only (anchored to the operator's single cpaLimitNm, not an independent
+  // magic number) with only a closing-sign check on TCPA, same as before this changeset.
+  const collisionCpaThresholdNm = prev.targetRiskLimits.cpaLimitNm * CAUTION_BAND_MULTIPLIER
   maybeFire(
     'collision_risk_rec',
-    prev.activeScenario === 'collision_risk' && riskiestTarget !== undefined && riskiestTarget.cpaNm < 2.2 && riskiestTarget.tcpaMinutes > 0,
-    () => collisionRiskRecommendation(riskiestTarget!.cpaNm, riskiestTarget!.tcpaMinutes, riskiestTarget!.label),
+    prev.activeScenario === 'collision_risk' && riskiestTarget !== undefined && riskiestTarget.cpaNm <= collisionCpaThresholdNm && riskiestTarget.tcpaMinutes > 0,
+    () => collisionRiskRecommendation(riskiestTarget!.cpaNm, riskiestTarget!.tcpaMinutes, riskiestTarget!.label, prev.targetRiskLimits),
   )
 
   const excursionUnit = reeferUnits[REEFER_EXCURSION_INDEX]

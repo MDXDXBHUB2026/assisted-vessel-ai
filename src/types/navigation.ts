@@ -10,6 +10,9 @@ export interface TargetVessel {
   tcpaMinutes: number
   relativeRisk: 'low' | 'medium' | 'high'
   vesselType: string
+  /** AIS activation state for display purposes — an activated target is being actively tracked
+   * (full symbol, vector, heading line); a sleeping target is a smaller, unadorned contact. */
+  activated: boolean
 }
 
 export interface RouteWaypoint {

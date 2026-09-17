@@ -1,8 +1,10 @@
 import { create } from 'zustand'
-import type { OperationalMode, PocExecutionMode, RequiredAuthority, ScenarioId, ShoreCase, ShoreFunction } from '@/types'
+import type { AuditEventKind, OperationalMode, PocExecutionMode, RequiredAuthority, ScenarioId, ShoreCase, ShoreFunction } from '@/types'
+import type { TargetRiskLimits } from '@/decision-engine/targetRisk'
 import { assistanceLevelRank, OPERATIONAL_MODE_LABELS } from '@/types'
 import { buildInitialSimulationState, type AdapterStatuses, type SimulationState } from '@/simulation/state'
 import { tick } from '@/simulation/engine'
+import { toRelativeRisk } from '@/simulation/navigation'
 import { validateRecommendation } from '@/safety-engine/validate'
 import { assessOdd } from '@/safety-engine/oddEngine'
 import { DEMO_VOYAGE_PHASES } from '@/simulation/demoVoyage'
@@ -55,10 +57,12 @@ interface SimulationStore extends SimulationState {
 
   updateHazardStatus: (id: string, status: 'acknowledged' | 'assigned' | 'investigating' | 'escalated' | 'closed', note?: string) => void
 
+  setTargetRiskLimits: (limits: TargetRiskLimits) => void
+
   createShoreCase: (input: { vesselId: string; vesselName: string; function: ShoreFunction; priority: 'healthy' | 'advisory' | 'warning' | 'critical'; reason: string; requestedExpertise: string; recommendationId?: string }) => void
   updateShoreCase: (id: string, status: ShoreCase['status'], guidanceNotes?: string) => void
 
-  logAudit: (event: string, kind?: 'mode_change' | 'shore_case') => void
+  logAudit: (event: string, kind?: AuditEventKind) => void
 }
 
 export const useSimulationStore = create<SimulationStore>((set, get) => ({
@@ -82,9 +86,11 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
     const fresh = buildInitialSimulationState(carried + 1, get().nextShoreCaseNumber)
     const prevAudit = get().auditEvents
     const pocMode = get().pocMode
+    const targetRiskLimits = get().targetRiskLimits
     set({
       ...fresh,
       pocMode,
+      targetRiskLimits,
       nextIdCounter: fresh.nextIdCounter + 1,
       auditEvents: [
         {
@@ -534,6 +540,33 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
       ],
     })
     if (state.pocMode === 'connected') void connectedShoreCaseAdapter.sync(updated)
+  },
+
+  setTargetRiskLimits: (limits) => {
+    const state = get()
+    const auditId = state.nextIdCounter + 1
+    set({
+      nextIdCounter: auditId,
+      targetRiskLimits: limits,
+      // Re-classify every target's relativeRisk against the new limits immediately, rather than
+      // waiting for the next engine tick — while the simulation is paused no further tick runs,
+      // which would otherwise leave the navigation badge and CPA alarm showing the old limits'
+      // classification indefinitely even though the canvas (which reads targetRiskLimits directly)
+      // repaints instantly.
+      targets: state.targets.map((t) => ({ ...t, relativeRisk: toRelativeRisk(t.cpaNm, t.tcpaMinutes, limits) })),
+      auditEvents: [
+        {
+          id: mintId('AUD', auditId),
+          timestampIso: state.snapshot.simTimeIso,
+          operatingMode: OPERATIONAL_MODE_LABELS[state.snapshot.operationalMode],
+          scenarioId: state.activeScenario === 'normal_operations' ? null : state.activeScenario,
+          kind: 'mode_change',
+          event: `CPA/TCPA limit pair set to ${limits.cpaLimitNm.toFixed(2)} nm / ${limits.tcpaLimitMinutes} min by operator.`,
+          outcome: 'Limits updated',
+        },
+        ...state.auditEvents,
+      ],
+    })
   },
 
   logAudit: (event, kind = 'mode_change') => {

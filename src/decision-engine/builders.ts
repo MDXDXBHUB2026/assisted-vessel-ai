@@ -1,5 +1,6 @@
 import type { AnalyticalMethod, EvidenceItem, RequiredAuthority, RiskLevel, VesselSnapshot, VesselSystemArea } from '@/types'
 import type { MachineryAnalysis } from './machineryAnalytics'
+import { CAUTION_BAND_MULTIPLIER, DEFAULT_TARGET_RISK_LIMITS, type TargetRiskLimits } from './targetRisk'
 
 export interface RecommendationContent {
   vesselFunction: VesselSystemArea | 'voyage' | 'safety'
@@ -52,8 +53,13 @@ export function engineDegradationRecommendation(snapshot: VesselSnapshot, analys
   }
 }
 
-export function collisionRiskRecommendation(cpaNm: number, tcpaMinutes: number, targetLabel: string): RecommendationContent {
-  const riskLevel: RiskLevel = cpaNm < 1 ? 'high' : cpaNm < 2.5 ? 'medium' : 'low'
+export function collisionRiskRecommendation(cpaNm: number, tcpaMinutes: number, targetLabel: string, riskLimits: TargetRiskLimits = DEFAULT_TARGET_RISK_LIMITS): RecommendationContent {
+  // Deliberately CPA-only (anchored to the operator's single cpaLimitNm, not an independent magic
+  // number), not classifyTargetRisk's joint CPA-and-TCPA bands: this recommendation is triggered by
+  // CPA proximity alone (see engine.ts's collision_risk_rec gate) for a target whose TCPA can stay
+  // large for a long time even as CPA closes. Grading severity by the joint classification here
+  // would report a "low"-risk card for a target the CPA-based gate just flagged as a closing hazard.
+  const riskLevel: RiskLevel = cpaNm <= riskLimits.cpaLimitNm ? 'high' : cpaNm <= riskLimits.cpaLimitNm * CAUTION_BAND_MULTIPLIER ? 'medium' : 'low'
   return {
     vesselFunction: 'navigation',
     title: `Closing Range Development — ${targetLabel}`,
