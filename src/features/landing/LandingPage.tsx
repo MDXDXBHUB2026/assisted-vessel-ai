@@ -135,22 +135,7 @@ export function LandingPage() {
         </div>
       </div>
 
-      <div className="mx-auto max-w-7xl px-6 pb-10">
-        <div className="rounded-sm border border-panel-border bg-panel p-5">
-          <div className="text-xs font-semibold text-ink-000">About &amp; Collaboration</div>
-          <p className="mt-1.5 max-w-2xl text-xs text-ink-400">
-            Interested in exploring AI-assisted maritime operations, operational intelligence or human-centred decision-support systems? Let&rsquo;s connect and
-            discuss potential collaboration.
-          </p>
-          <div className="mt-3 flex flex-wrap gap-4 text-[11px] text-ink-500">
-            <span>LinkedIn: <span className="text-ink-300">[configure LinkedIn URL]</span></span>
-            <span>Portfolio: <span className="text-ink-300">[configure portfolio URL]</span></span>
-            <span>Contact: <span className="text-ink-300">[configure contact email]</span></span>
-          </div>
-        </div>
-      </div>
-
-      <footer className="border-t border-panel-border px-6 py-6 text-center text-[11px] text-ink-700">
+      <footer className="border-t border-panel-border px-6 py-8 text-center text-[11px] text-ink-700">
         <p className="mx-auto max-w-3xl">
           This independent technology demonstrator uses entirely synthetic operational data and illustrative engineering logic. It is not connected to a
           vessel, does not provide navigational or engineering advice, and is not intended for operational use. It does not claim operational certification
