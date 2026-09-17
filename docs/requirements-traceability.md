@@ -22,4 +22,5 @@
 | SIM-001–002 Simulator & scenarios | SIM-101–105 | All UC-03 through UC-11 | `simulation/engine.ts`, `simulation/scenarioEffects.ts`, `features/assistance/ScenarioControlPage.tsx` | All ten scenarios | Manual: each scenario visibly propagates across ≥2 system areas within its ramp window |
 | SIM-004 Audit trail | — | UC-15 | `features/audit/AuditPage.tsx` | Any | Manual: filter by event kind; chronological order preserved |
 | CYBER-001 No secrets | — | n/a | Build config | n/a | Code review: grep for API keys/secrets returns none |
-| BUS-005–007 Non-functional | — | n/a | `vite.config.ts`, `tsconfig*.json`, `.github/workflows/deploy.yml` | n/a | `npm run build` succeeds; strict TypeScript passes; responsive layout verified at laptop width |
+| BUS-005–006 Non-functional | — | n/a | `vite.config.ts`, `tsconfig*.json`, `.github/workflows/deploy.yml` | n/a | `npm run build` succeeds; strict TypeScript passes |
+| BUS-007 Console display floor | HMI-401 | n/a | `layouts/AppShell.tsx`, `components/layout/SmallScreenNotice.tsx`, `hooks/useMinViewportWidth.ts` | n/a | e2e: `e2e/small-screen-gate.spec.ts` — console gated below 900px with a live-resize toggle; landing page verified responsive at 375px with no horizontal scroll |

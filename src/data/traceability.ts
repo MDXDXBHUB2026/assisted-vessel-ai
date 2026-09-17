@@ -122,4 +122,15 @@ export const TRACEABILITY_ROWS: TraceabilityRow[] = [
     verificationEvidence: 'Manual review only: POC Data Mode banner shows SIMULATED with reason. Not covered by an automated test.',
     verificationStatus: 'not_verified',
   },
+  {
+    businessObjective: 'BUS-007 Console display floor',
+    operationalRequirement: 'The operations console requires a desktop-class display and shows an explicit notice below it, rather than a broken or misleading layout; the landing page stays fully responsive',
+    systemRequirement: 'HMI-401',
+    useCase: 'n/a',
+    hazardOrConstraint: 'n/a (presentation/UX requirement, not a safety hazard)',
+    component: 'layouts/AppShell.tsx, components/layout/SmallScreenNotice.tsx, hooks/useMinViewportWidth.ts',
+    testScenario: 'n/a',
+    verificationEvidence: 'e2e: e2e/small-screen-gate.spec.ts (gate below 900px, landing page intact at 375px with no horizontal scroll, console intact at 1440px, live resize toggles without reload)',
+    verificationStatus: 'verified',
+  },
 ]

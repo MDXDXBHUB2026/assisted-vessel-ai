@@ -96,4 +96,4 @@ Every requirement below is tagged with one of three classifications:
 |---|---|
 | BUS-005 | The application must build and run as a static site deployable to GitHub Pages, with no backend dependency. |
 | BUS-006 | The codebase must be written in strict TypeScript with a clean, feature-oriented directory structure. |
-| BUS-007 | The UI must be responsive down to laptop widths and follow a cohesive operations-centre visual language. |
+| BUS-007 | The operations console must follow a cohesive operations-centre visual language and requires a desktop-class display (≥900px); below that width it must show an explicit notice rather than a broken or misleading layout. The landing page is exempt from the 900px floor and must remain fully responsive down to phone widths, so a mobile visitor still receives the value proposition and disclaimers. |

@@ -172,3 +172,26 @@ A small number of explicitly named technologies were substituted for lighter alt
     a tool-permission set that reads as safe can still carry a conflict of interest — not because
     the underlying safety-engine defect it caused was left unresolved (it was found and fixed the
     same session).
+35. **The operations console requires a viewport at least 900px wide, by design, and this is a
+    deliberate gate rather than a missing responsive layout.** Below that width, `AppShell`
+    (`src/layouts/AppShell.tsx`) renders `SmallScreenNotice` instead of `CommandRibbon`/`SideNav`/
+    the routed page — an unmount, not a CSS hide, so no console component or its network/store
+    activity mounts below the gate; the store's own simulation loop and connected-POC adapter
+    probes live above `AppShell` in `App.tsx` and are unaffected. It uses `useMinViewportWidth` (a
+    `matchMedia` hook, not a user-agent sniff) so a desktop browser resized narrow sees the same
+    notice, and widening it back out remounts the console immediately with no reload — component-
+    local UI state (e.g. the navigation ring's range/orientation toggles) resets on that remount,
+    while store state persists. The console is a dense multi-panel real-time instrument — a
+    simultaneous navigation operating picture, FSA risk matrix and multi-panel engineering
+    telemetry — and a phone-width rendering of it would not honestly represent what a real bridge
+    or shore console shows; those are desktop instruments in practice, and this demonstrator says so
+    rather than quietly shipping a broken or misleading layout below that width, as was observed
+    during development (`NavigationCanvas` rendering at width 0 and the risk matrix SVG not
+    rendering at 375px). The landing page is deliberately excluded from this gate and, per
+    `e2e/small-screen-gate.spec.ts`, remains responsive at 375px width with no horizontal scroll and
+    its value proposition, standards basis, synthetic-data disclaimer and build line all visible —
+    only the console routes are gated. This is a presentation/UX decision, not a security boundary:
+    it is trivially bypassable (resize the window, or navigate directly to a console route) and
+    gates nothing sensitive. Traced as BUS-007 / HMI-401 in `src/data/traceability.ts` and
+    `docs/requirements-traceability.md`, verified by that same e2e spec; `useMinViewportWidth` and
+    the `AppShell` branch itself have no dedicated unit test.
