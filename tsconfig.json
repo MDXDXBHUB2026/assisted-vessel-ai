@@ -1,8 +1,18 @@
 {
   "files": [],
   "references": [
-    { "path": "./tsconfig.app.json" },
-    { "path": "./tsconfig.node.json" },
-    { "path": "./tsconfig.test.json" }
+    { "path": "./packages/core-domain" },
+    { "path": "./packages/core-domain/tsconfig.test.json" },
+    { "path": "./packages/safety-engine" },
+    { "path": "./packages/safety-engine/tsconfig.test.json" },
+    { "path": "./packages/decision-engine" },
+    { "path": "./packages/decision-engine/tsconfig.test.json" },
+    { "path": "./packages/simulator" },
+    { "path": "./packages/simulator/tsconfig.test.json" },
+    { "path": "./packages/assurance" },
+    { "path": "./packages/assurance/tsconfig.test.json" },
+    { "path": "./packages/app" },
+    { "path": "./packages/app/tsconfig.node.json" },
+    { "path": "./packages/app/tsconfig.test.json" }
   ]
 }

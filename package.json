@@ -3,25 +3,18 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
+    "dev": "npm run dev --workspace=@ave/app",
+    "build": "tsc -b && npm run build --workspace=@ave/app",
     "lint": "oxlint",
-    "preview": "vite preview",
+    "preview": "npm run preview --workspace=@ave/app",
     "test": "vitest run",
-    "test:e2e": "playwright test",
+    "test:e2e": "playwright test --config=packages/app/playwright.config.ts",
     "test:coverage": "vitest run --coverage",
     "verify": "npm run lint && tsc -b && npm run test"
-  },
-  "dependencies": {
-    "clsx": "^2.1.1",
-    "echarts": "^6.1.0",
-    "lucide-react": "^1.44.0",
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8",
-    "react-router-dom": "^7.18.3",
-    "recharts": "^3.10.1",
-    "zustand": "^5.0.15"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",

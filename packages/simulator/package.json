@@ -1,0 +1,11 @@
+{
+  "name": "@ave/simulator",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "dependencies": {
+    "@ave/core-domain": "*",
+    "@ave/safety-engine": "*",
+    "@ave/decision-engine": "*"
+  }
+}

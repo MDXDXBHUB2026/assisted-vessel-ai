@@ -1,0 +1,41 @@
+{
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.test.tsbuildinfo",
+    "target": "es2023",
+    "lib": ["ES2023", "DOM"],
+    "module": "esnext",
+    "types": ["node", "vite/client"],
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "baseUrl": ".",
+    "paths": {
+      "@/types": ["../core-domain/src/types/index.ts"],
+      "@/utils/*": ["../core-domain/src/utils/*"],
+      "@ave/core-domain/*": ["../core-domain/src/*"],
+      "@ave/safety-engine/*": ["../safety-engine/src/*"],
+      "@ave/decision-engine/*": ["../decision-engine/src/*"],
+      "@ave/simulator/*": ["../simulator/src/*"],
+      "@ave/assurance/*": ["../assurance/src/*"],
+      "@/*": ["./src/*"]
+    },
+    "ignoreDeprecations": "6.0",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "references": [
+    { "path": "../core-domain" },
+    { "path": "../safety-engine" },
+    { "path": "../decision-engine" },
+    { "path": "../simulator" },
+    { "path": "../assurance" }
+  ],
+  "include": ["src/**/*.test.ts", "src/**/*.test.tsx", "e2e/**/*.ts"]
+}

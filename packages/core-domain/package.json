@@ -1,0 +1,6 @@
+{
+  "name": "@ave/core-domain",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module"
+}

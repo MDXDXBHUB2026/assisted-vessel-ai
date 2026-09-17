@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.test.tsbuildinfo",
+    "target": "es2023",
+    "lib": ["ES2023"],
+    "module": "esnext",
+    "types": ["node", "vite/client"],
+    "skipLibCheck": true,
+
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@ave/core-domain/*": ["../core-domain/src/*"],
+      "@ave/decision-engine/*": ["../decision-engine/src/*"],
+      "@ave/simulator/*": ["../simulator/src/*"]
+    },
+    "ignoreDeprecations": "6.0",
+
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "references": [{ "path": "./tsconfig.json" }, { "path": "../decision-engine" }, { "path": "../simulator" }],
+  "include": ["src/**/*.test.ts"]
+}

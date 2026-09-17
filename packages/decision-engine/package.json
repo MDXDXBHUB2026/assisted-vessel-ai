@@ -1,0 +1,12 @@
+{
+  "name": "@ave/decision-engine",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "dependencies": {
+    "@ave/core-domain": "*"
+  },
+  "devDependencies": {
+    "@ave/simulator": "*"
+  }
+}

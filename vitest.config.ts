@@ -1,14 +1,10 @@
 import { defineConfig } from 'vitest/config'
-import path from 'node:path'
 
+// Each package under packages/* owns its own vitest config (or falls back to its vite config),
+// including its own module resolution aliases — a single shared '@/*' alias cannot be correct for
+// every package at once, since '@/*' points at a different package's own src in each of them.
 export default defineConfig({
-  resolve: {
-    alias: {
-      '@': path.resolve(import.meta.dirname, './src'),
-    },
-  },
   test: {
-    environment: 'node',
-    exclude: ['**/node_modules/**', '**/dist/**', 'e2e/**'],
+    projects: ['packages/*'],
   },
 })
