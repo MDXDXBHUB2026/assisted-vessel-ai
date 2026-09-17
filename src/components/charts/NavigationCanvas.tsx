@@ -4,8 +4,8 @@ import { bearingDeg, haversineNm, projectPosition } from '@/utils/geo'
 import { classifyTargetRisk, type TargetRiskLevel } from '@/decision-engine/targetRisk'
 import { useSimulationStore } from '@/store/simulationStore'
 
-type NavOrientation = 'north_up' | 'course_up'
-type NavMotionMode = 'relative' | 'true'
+export type NavOrientation = 'north_up' | 'course_up'
+export type NavMotionMode = 'relative' | 'true'
 
 interface NavLayerToggles {
   route: boolean
@@ -37,6 +37,30 @@ interface Props {
   windSpeedKn: number
   windDirectionDeg: number
   visibilityNm: number
+
+  /**
+   * When composed under `NavigationRing` (the SVG chrome layer), the ring owns display-mode state
+   * and renders the control strip, bearing/range rings, own-ship symbol and readout itself; this
+   * canvas then renders ONLY the plot surface — background, trails and the high-frequency target
+   * field — with no chrome of its own, per the hybrid architecture in
+   * docs/navigation-display-specification.md. Defaults to `true` for the two existing standalone
+   * usages (NavigationPage's dense panel, OperationsCanvasPage), which are unaffected.
+   */
+  showChrome?: boolean
+  orientation?: NavOrientation
+  onOrientationChange?: (v: NavOrientation) => void
+  motionMode?: NavMotionMode
+  onMotionModeChange?: (v: NavMotionMode) => void
+  autoRange?: boolean
+  onAutoRangeChange?: (v: boolean) => void
+  manualRangeIndex?: number
+  onManualRangeIndexChange?: (v: number) => void
+  vectorMinutes?: VectorMinutes
+  onVectorMinutesChange?: (v: VectorMinutes) => void
+  trailKey?: TrailKey
+  onTrailKeyChange?: (v: TrailKey) => void
+  selectedTargetId?: string | null
+  onSelectedTargetIdChange?: (v: string | null) => void
 }
 
 interface AnimatedEntity {
@@ -57,20 +81,20 @@ interface TrailSample {
 
 // IMO Res. MSC.192(79): "Range scales of 0.25, 0.5, 0.75, 1.5, 3, 6, 12 and 24 NM should be
 // provided." Exactly these eight — no wider voyage-planning scale belongs on a tactical picture.
-const RANGE_SCALES_NM = [0.25, 0.5, 0.75, 1.5, 3, 6, 12, 24]
-const VECTOR_MINUTE_OPTIONS = [3, 6, 12] as const
-type VectorMinutes = (typeof VECTOR_MINUTE_OPTIONS)[number]
-const TRAIL_OPTIONS = [
+export const RANGE_SCALES_NM = [0.25, 0.5, 0.75, 1.5, 3, 6, 12, 24]
+export const VECTOR_MINUTE_OPTIONS = [3, 6, 12] as const
+export type VectorMinutes = (typeof VECTOR_MINUTE_OPTIONS)[number]
+export const TRAIL_OPTIONS = [
   { key: 'off', ms: 0, label: 'OFF' },
   { key: '30s', ms: 30_000, label: '30S' },
   { key: '1m', ms: 60_000, label: '1M' },
   { key: '3m', ms: 180_000, label: '3M' },
   { key: '6m', ms: 360_000, label: '6M' },
 ] as const
-type TrailKey = (typeof TRAIL_OPTIONS)[number]['key']
+export type TrailKey = (typeof TRAIL_OPTIONS)[number]['key']
 const TRAIL_HISTORY_CAP_MS = 360_000
 
-const RING_COUNT = 4
+export const RING_COUNT = 4
 const TARGET_HIT_RADIUS_PX = 16
 const TRANSITION_MS = 950
 const TRUE_MOTION_RESET_FRACTION = 0.6
@@ -110,7 +134,7 @@ function clamp(v: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, v))
 }
 
-function clampIndex(i: number): number {
+export function clampIndex(i: number): number {
   return Math.min(RANGE_SCALES_NM.length - 1, Math.max(0, i))
 }
 
@@ -130,7 +154,7 @@ function isPerceptible(speedKn: number, rangeNm: number): boolean {
  * watchkeeper monitors traffic at voyage-planning range). If containing all of that would force a
  * scale where motion is imperceptible, perceptibility wins.
  */
-function computeAutoRangeNm(own: GeoPosition, ownHeadingDeg: number, ownSpeedKn: number, targets: TargetVessel[], riskById: Map<string, TargetRiskLevel>, vectorMinutes: number): number {
+export function computeAutoRangeNm(own: GeoPosition, ownHeadingDeg: number, ownSpeedKn: number, targets: TargetVessel[], riskById: Map<string, TargetRiskLevel>, vectorMinutes: number): number {
   const ranged = targets.map((t) => ({ t, rangeNm: haversineNm(own, t.position) })).sort((a, b) => a.rangeNm - b.rangeNm)
   const requiredNm: number[] = [RANGE_SCALES_NM[0]!]
 
@@ -173,7 +197,8 @@ function describeAspect(relBearingDeg: number): string {
   return `${relBearingDeg > 0 ? 'GREEN' : 'RED'} ${String(rounded).padStart(3, '0')}`
 }
 
-export function NavigationCanvas({ own, ownHeadingDeg, ownSpeedKn, targets, routeWaypoints, historicalTrack, windSpeedKn, windDirectionDeg, visibilityNm }: Props) {
+export function NavigationCanvas(props: Props) {
+  const { own, ownHeadingDeg, ownSpeedKn, targets, routeWaypoints, historicalTrack, windSpeedKn, windDirectionDeg, visibilityNm, showChrome = true } = props
   const logAudit = useSimulationStore((s) => s.logAudit)
   // The CPA/TCPA limit pair lives in the simulation store, not component state: it is the same
   // single limit pair the CPA alarm and the collision-risk recommendation gate apply (MSC.192(79)),
@@ -181,14 +206,33 @@ export function NavigationCanvas({ own, ownHeadingDeg, ownSpeedKn, targets, rout
   const { cpaLimitNm, tcpaLimitMinutes } = useSimulationStore((s) => s.targetRiskLimits)
   const setTargetRiskLimits = useSimulationStore((s) => s.setTargetRiskLimits)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const [orientation, setOrientation] = useState<NavOrientation>('north_up')
-  const [motionMode, setMotionMode] = useState<NavMotionMode>('true')
+
+  // Every piece of display-mode state below is controllable from outside (NavigationRing, the SVG
+  // chrome layer, owns it so its own rings/labels/controls stay in lockstep with what this canvas
+  // draws) but falls back to internal state so the two standalone usages of this component keep
+  // working unchanged.
+  const [internalOrientation, setInternalOrientation] = useState<NavOrientation>('north_up')
+  const orientation = props.orientation ?? internalOrientation
+  const setOrientation = props.onOrientationChange ?? setInternalOrientation
+  const [internalMotionMode, setInternalMotionMode] = useState<NavMotionMode>('true')
+  const motionMode = props.motionMode ?? internalMotionMode
+  const setMotionMode = props.onMotionModeChange ?? setInternalMotionMode
   const [layers, setLayers] = useState<NavLayerToggles>(DEFAULT_NAV_LAYERS)
-  const [autoRange, setAutoRange] = useState(true)
-  const [manualRangeIndex, setManualRangeIndex] = useState(RANGE_SCALES_NM.indexOf(6))
-  const [vectorMinutes, setVectorMinutes] = useState<VectorMinutes>(6)
-  const [trailKey, setTrailKey] = useState<TrailKey>('3m')
-  const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null)
+  const [internalAutoRange, setInternalAutoRange] = useState(true)
+  const autoRange = props.autoRange ?? internalAutoRange
+  const setAutoRange = props.onAutoRangeChange ?? setInternalAutoRange
+  const [internalManualRangeIndex, setInternalManualRangeIndex] = useState(RANGE_SCALES_NM.indexOf(6))
+  const manualRangeIndex = props.manualRangeIndex ?? internalManualRangeIndex
+  const setManualRangeIndex = props.onManualRangeIndexChange ?? setInternalManualRangeIndex
+  const [internalVectorMinutes, setInternalVectorMinutes] = useState<VectorMinutes>(6)
+  const vectorMinutes = props.vectorMinutes ?? internalVectorMinutes
+  const setVectorMinutes = props.onVectorMinutesChange ?? setInternalVectorMinutes
+  const [internalTrailKey, setInternalTrailKey] = useState<TrailKey>('3m')
+  const trailKey = props.trailKey ?? internalTrailKey
+  const setTrailKey = props.onTrailKeyChange ?? setInternalTrailKey
+  const [internalSelectedTargetId, setInternalSelectedTargetId] = useState<string | null>(null)
+  const selectedTargetId = props.selectedTargetId !== undefined ? props.selectedTargetId : internalSelectedTargetId
+  const setSelectedTargetId = props.onSelectedTargetIdChange ?? setInternalSelectedTargetId
   const [displayRangeNm, setDisplayRangeNm] = useState(6)
 
   const ownAnimRef = useRef<AnimatedEntity>({ fromLat: own.latitude, fromLon: own.longitude, toLat: own.latitude, toLon: own.longitude, fromHeading: ownHeadingDeg, toHeading: ownHeadingDeg, updatedAtMs: performance.now() })
@@ -223,6 +267,7 @@ export function NavigationCanvas({ own, ownHeadingDeg, ownSpeedKn, targets, rout
     selectedTargetId,
     cpaLimitNm,
     tcpaLimitMinutes,
+    showChrome,
   })
   latestRef.current = {
     own,
@@ -244,6 +289,7 @@ export function NavigationCanvas({ own, ownHeadingDeg, ownSpeedKn, targets, rout
     selectedTargetId,
     cpaLimitNm,
     tcpaLimitMinutes,
+    showChrome,
   }
 
   // Register a new animation leg whenever the engine tick produces new own-ship/target values, and
@@ -306,6 +352,7 @@ export function NavigationCanvas({ own, ownHeadingDeg, ownSpeedKn, targets, rout
         selectedTargetId: curSelectedId,
         cpaLimitNm: curCpaLimit,
         tcpaLimitMinutes: curTcpaLimit,
+        showChrome: curShowChrome,
       } = latestRef.current
 
       const dpr = window.devicePixelRatio || 1
@@ -396,8 +443,12 @@ export function NavigationCanvas({ own, ownHeadingDeg, ownSpeedKn, targets, rout
         ctx.fillRect(0, 0, W, H)
       }
 
-      drawRangeRings(ctx, originX, originY, rangeNm, pxPerNm)
-      drawBearingRing(ctx, originX, originY, bearingRingRadiusPx, rotationDeg)
+      // When composed under NavigationRing (showChrome=false), the SVG chrome layer owns the range
+      // rings, bearing ring and safety domain — drawing them here too would duplicate them.
+      if (curShowChrome) {
+        drawRangeRings(ctx, originX, originY, rangeNm, pxPerNm)
+        drawBearingRing(ctx, originX, originY, bearingRingRadiusPx, rotationDeg)
+      }
 
       const curRoute = latestRef.current.routeWaypoints
       if (curLayers.route && curMotionMode === 'relative' && curRoute.length > 1) {
@@ -443,7 +494,7 @@ export function NavigationCanvas({ own, ownHeadingDeg, ownSpeedKn, targets, rout
         ctx.setLineDash([])
       }
 
-      if (curLayers.safetyDomain) {
+      if (curShowChrome && curLayers.safetyDomain) {
         ctx.beginPath()
         ctx.arc(ox, oy, 0.5 * pxPerNm, 0, Math.PI * 2)
         ctx.strokeStyle = 'rgba(237,165,40,0.4)'
@@ -550,27 +601,37 @@ export function NavigationCanvas({ own, ownHeadingDeg, ownSpeedKn, targets, rout
           }
           ctx.restore()
 
-          if (isSelected) drawCornerBrackets(ctx, tx, ty, size * 1.9)
+          // Corner brackets and text labels are chrome-layer concerns (selection/label
+          // de-confliction), owned by NavigationRing's SVG when composed — drawing them here too
+          // would duplicate them on screen.
+          if (curShowChrome) {
+            if (isSelected) drawCornerBrackets(ctx, tx, ty, size * 1.9)
 
-          if (risk !== 'normal' || isSelected) {
-            const label = `${t.label.replace('Synthetic Target ', '').toUpperCase()} ${formatNm(t.cpaNm)}`
-            ctx.font = 'bold 10px Inter, sans-serif'
-            const box = placeLabel(ctx, label, tx, ty, [...placedLabels])
-            ctx.fillStyle = risk === 'dangerous' ? '#ffb3ab' : risk === 'caution' ? '#ffd685' : '#f1f5f9'
-            ctx.fillText(label, box.x + 3, box.y + box.h - 3)
-            placedLabels.push(box)
+            if (risk !== 'normal' || isSelected) {
+              const label = `${t.label.replace('Synthetic Target ', '').toUpperCase()} ${formatNm(t.cpaNm)}`
+              ctx.font = 'bold 10px Inter, sans-serif'
+              const box = placeLabel(ctx, label, tx, ty, [...placedLabels])
+              ctx.fillStyle = risk === 'dangerous' ? '#ffb3ab' : risk === 'caution' ? '#ffd685' : '#f1f5f9'
+              ctx.fillText(label, box.x + 3, box.y + box.h - 3)
+              placedLabels.push(box)
+            }
           }
         }
       }
 
+      // Own-ship label space is always reserved so target labels never overprint it, whether the
+      // symbol itself is drawn here or (showChrome=false) by the SVG chrome layer at the same
+      // (ox, oy) — both derive it from the identical projection given the same controlled state.
       const ownLabelText = 'OWN SHIP'
       ctx.font = 'bold 10px Inter, sans-serif'
       placedLabels.push({ x: ox + 10, y: oy - 6, w: ctx.measureText(ownLabelText).width + 6, h: 14 })
 
-      drawOwnShip(ctx, ox, oy, ownNow.heading, rotationDeg, curSpeed, curVectorMinutes, bearingRingRadiusPx, pxPerNm)
-      ctx.font = 'bold 10px Inter, sans-serif'
-      ctx.fillStyle = '#f8fafc'
-      ctx.fillText(ownLabelText, ox + 10, oy + 4)
+      if (curShowChrome) {
+        drawOwnShip(ctx, ox, oy, ownNow.heading, rotationDeg, curSpeed, curVectorMinutes, bearingRingRadiusPx, pxPerNm)
+        ctx.font = 'bold 10px Inter, sans-serif'
+        ctx.fillStyle = '#f8fafc'
+        ctx.fillText(ownLabelText, ox + 10, oy + 4)
+      }
 
       if (curLayers.weather) drawWindIndicator(ctx, W, curWind, curWindDir)
 
@@ -621,6 +682,13 @@ export function NavigationCanvas({ own, ownHeadingDeg, ownSpeedKn, targets, rout
       `Dangerous target ${selectedTarget.label} acknowledged by operator (CPA ${formatNm(selectedTarget.cpaNm)} nm, TCPA ${Number.isFinite(selectedTarget.tcpaMinutes) ? `${selectedTarget.tcpaMinutes.toFixed(0)} min` : 'n/a'}; limits in effect: ${cpaLimitNm.toFixed(2)} nm / ${tcpaLimitMinutes} min).`,
       'human_decision',
     )
+  }
+
+  // Composed under NavigationRing: this canvas is purely the plot surface (background, trails,
+  // the high-frequency target field) inside the SVG chrome's own layout box — no control strip,
+  // no side panel, no own-ship symbol/rings duplicated over what the SVG layer already draws.
+  if (!showChrome) {
+    return <canvas ref={canvasRef} className="h-full w-full cursor-pointer" onClick={handleCanvasClick} data-testid="navigation-canvas-surface" />
   }
 
   return (

@@ -1,6 +1,7 @@
 import { useSimulationStore } from '@/store/simulationStore'
 import { Panel } from '@/components/ui/Panel'
 import { NavigationCanvas } from '@/components/charts/NavigationCanvas'
+import { NavigationRing } from '@/components/charts/NavigationRing'
 import { StatTile } from '@/components/ui/StatTile'
 import { RiskBadge } from '@/components/ui/Badge'
 import { ROUTE_WAYPOINTS } from '@/data/route'
@@ -32,17 +33,22 @@ export function NavigationPage() {
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Panel title="Navigation Operating Picture" className="lg:col-span-2" dense>
-          <NavigationCanvas
-            own={snapshot.navigation.position}
-            ownHeadingDeg={snapshot.navigation.heading}
-            ownSpeedKn={snapshot.navigation.speedOverGroundKn}
-            targets={targets}
-            routeWaypoints={ROUTE_WAYPOINTS}
-            historicalTrack={ownTrack}
-            windSpeedKn={snapshot.environment.windSpeedKn}
-            windDirectionDeg={snapshot.environment.windDirectionDeg}
-            visibilityNm={snapshot.environment.visibilityNm}
-          />
+          <NavigationRing own={snapshot.navigation.position} ownHeadingDeg={snapshot.navigation.heading} ownSpeedKn={snapshot.navigation.speedOverGroundKn} targets={targets} renderTargets={false}>
+            {(bridge) => (
+              <NavigationCanvas
+                own={snapshot.navigation.position}
+                ownHeadingDeg={snapshot.navigation.heading}
+                ownSpeedKn={snapshot.navigation.speedOverGroundKn}
+                targets={targets}
+                routeWaypoints={ROUTE_WAYPOINTS}
+                historicalTrack={ownTrack}
+                windSpeedKn={snapshot.environment.windSpeedKn}
+                windDirectionDeg={snapshot.environment.windDirectionDeg}
+                visibilityNm={snapshot.environment.visibilityNm}
+                {...bridge}
+              />
+            )}
+          </NavigationRing>
         </Panel>
 
         <div className="flex flex-col gap-4">
