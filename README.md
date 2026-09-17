@@ -68,3 +68,7 @@ npm run preview
 ## Disclaimer
 
 This independent technology demonstrator uses entirely synthetic operational data and illustrative engineering logic. It is not connected to a vessel, does not provide navigational or engineering advice, and is not intended for operational use.
+
+## Licence
+
+See [`LICENSE`](LICENSE). This repository is published for portfolio and evaluation purposes only, all rights reserved.

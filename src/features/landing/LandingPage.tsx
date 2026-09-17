@@ -136,7 +136,18 @@ export function LandingPage() {
       </div>
 
       <footer className="border-t border-panel-border px-6 py-8 text-center text-[11px] text-ink-700">
-        <p className="mx-auto max-w-3xl">
+        <p className="mx-auto flex max-w-3xl flex-wrap items-center justify-center gap-x-4 gap-y-1">
+          <span>
+            LinkedIn:{' '}
+            <a href="https://www.linkedin.com/in/manojrajanuae/" target="_blank" rel="noopener noreferrer" className="text-info-400 hover:text-info-300">
+              linkedin.com/in/manojrajanuae
+            </a>
+          </span>
+          <span>
+            Email: <a href="mailto:echoflare06@gmail.com" className="text-info-400 hover:text-info-300">echoflare06@gmail.com</a>
+          </span>
+        </p>
+        <p className="mx-auto mt-2 max-w-3xl">
           This independent technology demonstrator uses entirely synthetic operational data and illustrative engineering logic. It is not connected to a
           vessel, does not provide navigational or engineering advice, and is not intended for operational use. It does not claim operational certification
           or production readiness, and does not represent any real maritime organisation.
