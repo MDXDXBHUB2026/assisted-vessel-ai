@@ -1,0 +1,69 @@
+flowchart LR
+
+subgraph 0["node_modules"]
+subgraph 1["clsx"]
+2["clsx.d.mts"]
+end
+subgraph 3["echarts"]
+subgraph 4["types"]
+subgraph 5["dist"]
+6["all.d.ts"]
+end
+end
+end
+subgraph 7["lucide-react"]
+subgraph 8["dist"]
+subgraph 9["esm"]
+A["lucide-react.mjs"]
+end
+end
+end
+subgraph B["react-dom"]
+C["client.js"]
+end
+subgraph D["react-router-dom"]
+subgraph E["dist"]
+F["index.d.ts"]
+end
+end
+subgraph G["react"]
+H["index.js"]
+end
+subgraph I["recharts"]
+subgraph J["es6"]
+K["index.js"]
+end
+end
+subgraph L["zustand"]
+subgraph M["esm"]
+N["index.d.mts"]
+end
+end
+end
+subgraph O["packages"]
+P["app"]
+Q["assurance"]
+R["core-domain"]
+S["decision-engine"]
+T["safety-engine"]
+U["simulator"]
+end
+P-->H
+P-->F
+P-->R
+P-->S
+P-->A
+P-->2
+P-->T
+P-->U
+P-->N
+P-->Q
+P-->6
+P-->K
+P-->C
+Q-->R
+S-->R
+T-->R
+U-->R
+U-->S
+U-->T

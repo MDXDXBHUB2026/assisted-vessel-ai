@@ -14,7 +14,9 @@
     "test": "vitest run",
     "test:e2e": "playwright test --config=packages/app/playwright.config.ts",
     "test:coverage": "vitest run --coverage",
-    "verify": "npm run lint && tsc -b && npm run test"
+    "depcruise": "depcruise packages",
+    "depcruise:graph": "depcruise packages --exclude \"\\.test\\.|/e2e/|\\.config\\.(ts|js)$\" --collapse \"^packages/[^/]+\" --output-type mermaid --output-to docs/dependency-graph.mermaid",
+    "verify": "npm run depcruise && npm run lint && tsc -b && npm run test"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
@@ -24,6 +26,7 @@
     "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-react": "^6.1.1",
     "autoprefixer": "^10.5.6",
+    "dependency-cruiser": "^18.3.1",
     "fast-check": "^4.10.1",
     "oxlint": "^1.81.0",
     "postcss": "^8.5.28",

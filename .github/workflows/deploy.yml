@@ -34,6 +34,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Package-boundary enforcement runs first and on its own: a boundary violation should fail
+      # fast, before spending time on lint/type-check/tests, and be unmistakable in the log rather
+      # than buried inside another step's output.
+      - name: Check package boundaries (dependency-cruiser)
+        run: npm run depcruise
+
       - name: Lint
         run: npm run lint
 

@@ -1,0 +1,17 @@
+{
+  "$comment": "Resolution-only view of the workspace for dependency-cruiser (.dependency-cruiser.cjs). Not part of the real build — it is never referenced from tsconfig.json and TypeScript itself never reads it. Each package's own tsconfig.json is the source of truth for what that package may resolve; this file exists only because dependency-cruiser's tsconfig-paths resolution reads a single merged paths table rather than following per-package tsconfig 'references' the way tsc and Vite do. Every entry here is the union of the per-package 'paths' already declared across packages/*/tsconfig.json — see those files, not this one, for the real per-package boundary.",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@ave/core-domain/*": ["packages/core-domain/src/*"],
+      "@ave/safety-engine/*": ["packages/safety-engine/src/*"],
+      "@ave/decision-engine/*": ["packages/decision-engine/src/*"],
+      "@ave/simulator/*": ["packages/simulator/src/*"],
+      "@ave/assurance/*": ["packages/assurance/src/*"],
+      "@ave/app/*": ["packages/app/src/*"],
+      "@/types": ["packages/core-domain/src/types/index.ts"],
+      "@/utils/*": ["packages/core-domain/src/utils/*"],
+      "@/*": ["packages/app/src/*"]
+    }
+  }
+}

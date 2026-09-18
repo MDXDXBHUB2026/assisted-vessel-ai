@@ -84,49 +84,126 @@ Engineering state (the simulation `tick()`) and visual rendering are deliberatel
 
 ## 5. Source tree
 
+Since Phase 1A this is an npm-workspaces monorepo: `packages/*`, each with its own `package.json`
+declaring exactly which sibling packages it depends on, rather than one `src/` tree.
+
 ```
-src/
-  components/
-    ui/                Badge, Panel, Button, InstrumentRow, ProgressBar, Tabs, Modal, StatTile
-    layout/             CommandRibbon, SideNav
-    charts/             NavigationCanvas, VesselTopology, StreamingChart (ECharts), Sparkline (Recharts)
-  hooks/                useSimulationLoop, useInterpolatedNumber/Heading/Position/Signal, useMetricHistory
-  layouts/              AppShell (command ribbon + side nav + routed content)
-  features/
-    operations/         Operations Canvas (Bridge Operations mission-control view)
-    engineering/         Engineering Operations (Chief Engineer workspace)
-    vessel/              Digital Twin
-    navigation/          Navigation situational awareness
-    machinery/           Machinery Intelligence (streaming telemetry)
-    maintenance/         Predictive Maintenance
-    voyage/              Voyage & Energy Intelligence
-    cargo/               Cargo / Reefer Intelligence
-    safety/              Safety Intelligence
-    alarms/              Intelligent Alarm Management
-    assistance/          Envelope & Assistance (ODD), Human Decision Centre, Copilot, Scenario/Demo Voyage Control
-    shore/               Shore Assisted Operations Centre
-    audit/               Decision Audit Trail
-    assurance/           System Assurance, Engineering Assurance, Requirements & Verification
-    value/               Operational Value assessment
-    architecture/        Interactive architecture view
-    landing/             Landing / launch screen
-    conops/              Concept of Operations page
-  simulation/            Baseline state, tick engine, navigation/alarm/health/telemetry-history helpers,
-                         scenario effects, demo voyage phase sequencer, operational-state/system-assurance selectors
+packages/
+  core-domain/           Shared TypeScript domain types, random/geo/format/theme helpers,
+                         telemetryHistory, the simulation start-time constant. No dependencies.
+  safety-engine/         Operational envelope (ODD) definitions & assessment, safety validation.
+                         Depends on core-domain only (decision-engine/simulator are
+                         devDependencies — test fixtures only, never a production dependency).
   decision-engine/       Machinery analytics (trend + persistence + multivariate cylinder spread),
-                         recommendation builders, alarm correlation
-  safety-engine/         Operational envelope (ODD) definitions & assessment, safety validation
-  services/
-    adapters/            Telemetry/Weather/Copilot/DocumentSearch/SystemHealth/Audit/ShoreCase adapters
-    pocMode.ts           Connected-POC endpoint config and mode persistence
-  data/                  Static synthetic reference data, engineering-programme artifacts, traceability rows
-  store/                 simulationStore (Zustand)
-  types/                 Shared TypeScript domain types
-  utils/                 random/geo/format/theme helpers
+                         recommendation builders, alarm correlation. Depends on core-domain only
+                         (simulator is a devDependency — test fixtures only).
+  simulator/
+    simulation/          Baseline state, tick engine, navigation/alarm/health/telemetry-history
+                         helpers, scenario effects, demo voyage phase sequencer,
+                         operational-state/system-assurance selectors
+    data/                Synthetic fixtures: route, voyage plan, fleet, vessel identity,
+                         engineering-programme artifacts
+                         Depends on core-domain, safety-engine, decision-engine.
+  assurance/             Requirements traceability rows. Depends on core-domain only.
+  app/                   Everything UI: components, features, hooks, layouts, services/adapters,
+                         the Zustand store, App.tsx/main.tsx, e2e/. Depends on all of the above.
+    src/
+      components/
+        ui/              Badge, Panel, Button, InstrumentRow, ProgressBar, Tabs, Modal, StatTile
+        layout/           CommandRibbon, SideNav
+        charts/           NavigationCanvas, VesselTopology, StreamingChart (ECharts), Sparkline (Recharts)
+      hooks/              useSimulationLoop, useInterpolatedNumber/Heading/Position/Signal, useMetricHistory
+      layouts/            AppShell (command ribbon + side nav + routed content)
+      features/
+        operations/       Operations Canvas (Bridge Operations mission-control view)
+        engineering/       Engineering Operations (Chief Engineer workspace)
+        vessel/            Digital Twin
+        navigation/        Navigation situational awareness
+        machinery/         Machinery Intelligence (streaming telemetry)
+        maintenance/       Predictive Maintenance
+        voyage/            Voyage & Energy Intelligence
+        cargo/             Cargo / Reefer Intelligence
+        safety/            Safety Intelligence
+        alarms/            Intelligent Alarm Management
+        assistance/        Envelope & Assistance (ODD), Human Decision Centre, Copilot, Scenario/Demo Voyage Control
+        shore/             Shore Assisted Operations Centre
+        audit/             Decision Audit Trail
+        assurance/         System Assurance, Engineering Assurance, Requirements & Verification
+        value/             Operational Value assessment
+        architecture/      Interactive architecture view
+        landing/           Landing / launch screen
+        conops/            Concept of Operations page
+      services/
+        adapters/          Telemetry/Weather/Copilot/DocumentSearch/SystemHealth/Audit/ShoreCase adapters
+        pocMode.ts         Connected-POC endpoint config and mode persistence
+      store/               simulationStore (Zustand)
+    e2e/                   Playwright acceptance-journey tests
 docs/                    This documentation set
-e2e/                     Playwright acceptance-journey tests
 .github/workflows/       GitHub Pages deployment workflow
 ```
+
+### 5.1 Package boundaries, enforced
+
+Every arrow below is a real `dependencies` entry in a `package.json`, not an aspiration — see
+`.dependency-cruiser.cjs`, which reads those `package.json` files and derives its rules from them,
+and the `Check package boundaries (dependency-cruiser)` CI step that fails the build the moment an
+import violates one. `npm run depcruise:graph` regenerates the diagram below from the live source
+tree; the committed source lives at [`docs/dependency-graph.mermaid`](dependency-graph.mermaid).
+
+```mermaid
+flowchart LR
+
+subgraph node_modules
+  react["react"]
+  react_dom["react-dom"]
+  react_router["react-router-dom"]
+  zustand["zustand"]
+  recharts["recharts"]
+  echarts["echarts"]
+  lucide["lucide-react"]
+  clsx["clsx"]
+end
+
+subgraph packages
+  app["app"]
+  assurance["assurance"]
+  core_domain["core-domain"]
+  decision_engine["decision-engine"]
+  safety_engine["safety-engine"]
+  simulator["simulator"]
+end
+
+app --> core_domain
+app --> safety_engine
+app --> decision_engine
+app --> simulator
+app --> assurance
+app --> react
+app --> react_dom
+app --> react_router
+app --> zustand
+app --> recharts
+app --> echarts
+app --> lucide
+app --> clsx
+
+assurance --> core_domain
+decision_engine --> core_domain
+safety_engine --> core_domain
+simulator --> core_domain
+simulator --> safety_engine
+simulator --> decision_engine
+```
+
+Notably absent: nothing points at `app` — no package depends on the UI layer, including in tests
+(`no-package-imports-app`). `safety-engine` and `decision-engine` resolve to nothing beyond
+`core-domain` in production code (`safety-engine-prod-deps-match-package-json` /
+`decision-engine-prod-deps-match-package-json`, scoped `allow-list`) — their test-only edges to
+`simulator`/`decision-engine` (fixtures, declared as `devDependencies`) do not appear here because
+this diagram is generated from production code only. And no module matching a generative/copilot
+path pattern (today: `services/adapters/copilotAdapter.ts`; anticipated:
+`packages/generative/**` for Phase 4) has an import path to `safety-engine`, in either direction —
+per §4.5, Tier 3 assistive components must have none.
 
 ## 6. Decision-chain data flow (single tick)
 
