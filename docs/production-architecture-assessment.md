@@ -133,9 +133,19 @@ event.prevHash = previous.hash
 event.hash     = SHA-256(prevHash ‖ canonicalJSON(event))
 ```
 
-- Browser/demo tier: IndexedDB, survives refresh.
+**Status: the chain itself is done (Phase 1C, `packages/core-domain/src/auditChain.ts`) — the
+persistence and server pieces below are not.** Every record now carries `seq`/`prevHash`/`hash`,
+sealed incrementally outside the simulation tick, with a sealed-prefix checkpoint and an eviction
+boundary anchoring both ends against tampering, deletion and reordering — see
+`docs/assumptions.md` items 23 and 36 for exactly what this does and does not establish
+(tamper-EVIDENT, not non-repudiable; still client memory, still cleared by a refresh). What
+remains outstanding from this section:
+
+- Browser/demo tier: IndexedDB, survives refresh. *(Still in-memory only — cleared by a refresh.)*
 - Server tier: Postgres append-only table, `UPDATE`/`DELETE` blocked by trigger and by role grants.
-- Verification endpoint that walks the chain and reports the first broken link.
+- Verification endpoint that walks the chain and reports the first broken link. *(`verifyChain`
+  exists and is exposed in the Audit page's Chain Integrity panel; there is no server-side
+  endpoint, because there is no server.)*
 
 This is cheap, needs no new infrastructure, and it is the difference between an audit trail a surveyor would accept and one they would not.
 

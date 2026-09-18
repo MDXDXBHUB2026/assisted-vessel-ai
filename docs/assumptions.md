@@ -54,10 +54,14 @@ A small number of explicitly named technologies were substituted for lighter alt
     the *shape* of an accountability record without providing its evidentiary value. This is
     appropriate for a browser-only demonstrator with synthetic data, and is stated here so the
     audit trail is never mistaken for more than it is.
-23. **The audit trail is session-lifetime and not tamper-evident.** It lives in client memory, a
-    refresh clears it, and nothing prevents it being rewritten. A production realisation would
-    need an append-only, hash-chained or WORM record authored server-side from an authenticated
-    session — see `docs/production-architecture-assessment.md`.
+23. **The audit trail is session-lifetime, and tamper-EVIDENT but not non-repudiable.** It lives
+    in client memory and a refresh clears it. Records are hash-chained and verified — see item
+    36 — so altering, deleting, reordering or forging one is detectable; but with no
+    authenticated identity (item 22) nothing establishes WHO wrote a record, and an actor who
+    rewrites the whole client state consistently (the chain, the checkpoint and the eviction
+    history together) is still not caught. A production realisation would need that record
+    authored server-side from an authenticated session, externally anchored and signed — see
+    `docs/production-architecture-assessment.md`.
 24. **No clickjacking protection on this deployment.** A Content-Security-Policy is set via
     `<meta>` in `index.html`, but `frame-ancestors` is ignored in meta form and requires a real
     response header. GitHub Pages cannot set response headers, so this specific protection is
@@ -211,22 +215,24 @@ A small number of explicitly named technologies were substituted for lighter alt
       naive chain's genesis lives.** A verifier that walks from genesis would pass every test up to
       event 2000 and then break silently. The fix is a carried-forward `AuditChainCheckpoint`
       (`sealedThroughSeq`, `sealedPrefixHash`, `sealedCount`) that the incremental sealer advances
-      as it seals, independent of whether the live array still holds those records. `verifyChain`
-      treats the oldest *currently visible* sealed record as its trust anchor when earlier records
-      have been evicted (its own `prevHash` cannot be independently re-derived — that content is
-      gone) rather than trying to re-walk history that no longer exists. WHERE that trust anchor
-      is allowed to sit is pinned down exactly by `SimulationState.evictedThroughSeq` (the highest
-      `seq` the engine's own truncation has ever legitimately evicted, advanced only from that one
-      place): `verifyChain` requires the oldest visible sealed record's `seq` to equal
-      `evictedThroughSeq + 1`, so deleting any number of the oldest records — at any time,
-      including before `MAX_AUDIT_EVENTS` has ever been reached — is caught, not merely "some
-      prefix is missing, and that's expected". What remains a bounded, disclosed limitation is
-      narrower than that: ONCE a record has been legitimately evicted, its content is gone, so the
-      new oldest surviving record's own `prevHash` cannot be independently re-derived and is
-      accepted as given — without Phase 2C's external anchor, a fully self-consistent forgery from
-      that point forward cannot be distinguished from the genuine article. The retention boundary
-      (`N events sealed`, most no longer individually visible, plus how many have been evicted) is
-      surfaced in the Audit page's Chain Integrity panel rather than left implicit. Symmetrically, at the
+      as it seals, independent of whether the live array still holds those records, PLUS
+      `SimulationState.evictedThroughSeq` (the highest `seq` the engine's own truncation has ever
+      legitimately evicted, advanced only from that one place, and derived from the surviving
+      buffer rather than accumulated — see `engine.ts`). `verifyChain` treats the oldest
+      *currently visible* sealed record as its trust anchor when earlier records have been
+      evicted, but its POSITION is not left to whatever an attacker leaves behind: `verifyChain`
+      requires the oldest visible sealed record's `seq` to equal `evictedThroughSeq + 1`, so
+      deleting any number of the oldest records — at any time, including before
+      `MAX_AUDIT_EVENTS` has ever been reached — is caught, not merely "some prefix is missing,
+      and that's expected". What remains a bounded, disclosed limitation is narrower than that:
+      ONCE a record has been legitimately evicted, its content is genuinely gone, so the new
+      oldest surviving record's own `prevHash` cannot be independently re-derived and is accepted
+      as given — an actor who rewrites the whole retained window AND `sealedPrefixHash` AND
+      `evictedThroughSeq` consistently is still not caught; without Phase 2C's external anchor,
+      that whole-state forgery cannot be distinguished from the genuine article. The retention
+      boundary (`N events sealed`, most no longer individually visible, and how many have been
+      evicted) is surfaced in the Audit page's Chain Integrity panel rather than left implicit.
+      Symmetrically, at the
       NEWEST end, `verifyChain` requires the newest visible sealed record's `seq` AND `hash` to
       match `checkpoint.sealedThroughSeq`/`sealedPrefixHash` exactly — required precisely because
       a tamperer who mutates a record and honestly re-hashes everything after it forward (or
