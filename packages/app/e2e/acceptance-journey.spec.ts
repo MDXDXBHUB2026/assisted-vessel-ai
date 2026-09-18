@@ -128,3 +128,24 @@ test.describe('Blocked / gated recommendations', () => {
     await expect(page.getByText('Every recommendation requires explicit human review')).toBeVisible()
   })
 })
+
+test.describe('Audit trail — hash-chain integrity', () => {
+  test('the chain-integrity panel renders and reports verified on a clean run', async ({ page }) => {
+    await enterBridgeOperations(page)
+    // Let a real tick (and the async sealer that follows it, outside the tick — see
+    // docs/assumptions.md) run at least once in real wall-clock time before checking.
+    await page.waitForTimeout(3_000)
+    await page.getByText('Audit Trail', { exact: true }).click()
+
+    const status = page.getByTestId('chain-integrity-status')
+    await expect(status).toHaveAttribute('data-chain-valid', 'true', { timeout: 15_000 })
+    await expect(status).toContainText('Chain Verified')
+
+    const sealedCount = await page.getByTestId('chain-sealed-count').innerText()
+    expect(Number(sealedCount)).toBeGreaterThan(0)
+
+    // The manual re-verify control works too, not just the automatic pass.
+    await page.getByTestId('verify-chain-button').click()
+    await expect(status).toHaveAttribute('data-chain-valid', 'true')
+  })
+})

@@ -195,3 +195,86 @@ A small number of explicitly named technologies were substituted for lighter alt
     gates nothing sensitive. Traced as BUS-007 / HMI-401 in `src/data/traceability.ts` and
     `docs/requirements-traceability.md`, verified by that same e2e spec; `useMinViewportWidth` and
     the `AppShell` branch itself have no dedicated unit test.
+36. **The audit trail is hash-chained (Phase 1C) to be tamper-EVIDENT, not to be non-repudiable.**
+    `packages/core-domain/src/auditChain.ts` is the single source of truth; read its own header
+    comment before touching the audit trail anywhere else. This item records the three structural
+    constraints that design was built against, and what it deliberately does not claim.
+    - **No signing, no identity binding.** Each record's `hash` covers its own canonical content
+      plus `prevHash` (SHA-256), so altering, deleting, reordering or forging a sealed record is
+      detectable — but nothing here proves *who* wrote a record, or stops someone with write
+      access to the client-side store state from regenerating a whole alternate chain from
+      scratch (a real non-repudiation property requires an externally anchored, signed record —
+      Phase 2C, with real identity). "Tamper-evident" and "non-repudiable" are not synonyms; this
+      demonstrator only claims the former.
+    - **The retained buffer is newest-first and bounded (`MAX_AUDIT_EVENTS = 2000` in
+      `packages/simulator/src/simulation/engine.ts`) — truncation drops the OLDEST events, where a
+      naive chain's genesis lives.** A verifier that walks from genesis would pass every test up to
+      event 2000 and then break silently. The fix is a carried-forward `AuditChainCheckpoint`
+      (`sealedThroughSeq`, `sealedPrefixHash`, `sealedCount`) that the incremental sealer advances
+      as it seals, independent of whether the live array still holds those records. `verifyChain`
+      treats the oldest *currently visible* sealed record as its trust anchor when earlier records
+      have been evicted (its own `prevHash` cannot be independently re-derived — that content is
+      gone) rather than trying to re-walk history that no longer exists. WHERE that trust anchor
+      is allowed to sit is pinned down exactly by `SimulationState.evictedThroughSeq` (the highest
+      `seq` the engine's own truncation has ever legitimately evicted, advanced only from that one
+      place): `verifyChain` requires the oldest visible sealed record's `seq` to equal
+      `evictedThroughSeq + 1`, so deleting any number of the oldest records — at any time,
+      including before `MAX_AUDIT_EVENTS` has ever been reached — is caught, not merely "some
+      prefix is missing, and that's expected". What remains a bounded, disclosed limitation is
+      narrower than that: ONCE a record has been legitimately evicted, its content is gone, so the
+      new oldest surviving record's own `prevHash` cannot be independently re-derived and is
+      accepted as given — without Phase 2C's external anchor, a fully self-consistent forgery from
+      that point forward cannot be distinguished from the genuine article. The retention boundary
+      (`N events sealed`, most no longer individually visible, plus how many have been evicted) is
+      surfaced in the Audit page's Chain Integrity panel rather than left implicit. Symmetrically, at the
+      NEWEST end, `verifyChain` requires the newest visible sealed record's `seq` AND `hash` to
+      match `checkpoint.sealedThroughSeq`/`sealedPrefixHash` exactly — required precisely because
+      a tamperer who mutates a record and honestly re-hashes everything after it forward (or
+      rewrites the newest record and recomputes its own hash, or appends a forged record with an
+      honestly-computed hash) produces something internally self-consistent that the per-record
+      loop alone cannot catch; the checkpoint, written by the real sealer and never touched by
+      that loop, is what still disagrees. A safety review found this comparison missing in an
+      early draft (three working forgeries verified as "valid"); it is now required and covered
+      by dedicated tests in `auditChain.test.ts`.
+    - **Hashing is asynchronous (`crypto.subtle.digest`); the simulation tick is not.** Audit
+      events are created — and given their `seq` — synchronously inside the tick (and inside every
+      `simulationStore.ts` action), but start "pending" (`hash`/`prevHash` both `PENDING_HASH`,
+      i.e. `''`). A separate incremental sealer (`sealPending`, invoked from a module-level
+      `useSimulationStore.subscribe` callback that fires whenever `nextAuditSeq` changes — covering
+      both producers uniformly, including while the simulation is paused — plus a one-time kick-off
+      call for the very first pending record, minted before that subscription exists) computes real
+      hashes afterwards, in `seq` order, never from inside `tick()` itself. A trigger that arrives
+      while a pass is already in flight does not start a second overlapping pass, but nor is it
+      dropped: a dirty flag makes the in-flight pass loop once more after it finishes, so no
+      trigger is ever silently lost — an earlier version of this guard did drop overlapping
+      triggers, which a safety review found could strand a record permanently pending (and so
+      permanently outside `verifyChain`'s reach, which excludes pending records by design) if
+      nothing else ever changed `nextAuditSeq` again in that session. If sealing ever did fall
+      behind far enough that a still-pending record were evicted before being sealed,
+      `sealPending` stops at that gap rather than skipping past it silently — a real limitation,
+      not expected to bite at `MAX_AUDIT_EVENTS = 2000`, and called out here rather than pretended
+      away.
+    - **Two producers, one sequencing point.** Both the engine tick (`engine.ts`'s `pushAudit`)
+      and every `simulationStore.ts` action that writes an audit event allocate `seq` from the
+      same persisted counter, `SimulationState.nextAuditSeq` — mirroring the pre-existing
+      `nextIdCounter` pattern for audit `id`s. `seq`, not `id`, is the audit trail's real ordering
+      key; a test (`simulationStore.test.ts`, "assigns audit `seq` uniquely and gaplessly across
+      BOTH producers") exercises both producers together, interleaved, across a RESET ENVIRONMENT,
+      and asserts the union is unique and gap-free.
+    - **Decision records carry the hash of the audit record that captured them, not a mutable
+      id.** `Recommendation.decisionAuditSeq` is set synchronously when a decision is recorded;
+      `Recommendation.decisionAuditHash` is backfilled by `sealAuditChain` once the sealer reaches
+      that `seq` — never fabricated ahead of the real computation. Surfaced in the Human Decision
+      Centre's decision history table (an "Audit Record" column showing `#seq · hash prefix`, or
+      "sealing…" while still pending) rather than written and never displayed anywhere. The
+      connected-mode audit mirror (`connectedAuditAdapter`, used only when `pocMode === 'connected'`
+      — which always falls back in this demonstrator, see the POC-mode item elsewhere in this
+      file) overrides the mirrored record's `id`/`scenarioId`, so its `hash`/`prevHash` are reset
+      to `PENDING_HASH` before sending rather than carried over looking like a chain link the
+      mirror does not actually have: that mirror is a copy sent across a separate system boundary,
+      not a record in this store's own chain, and is never covered by `verifyChain`.
+    - `canonicaliseAuditEvent` explicitly EXCLUDES `hash` and `prevHash` from the material being
+      hashed (hashing a field that is part of the hash's own definition is circular — the mistake
+      everyone makes once) and coalesces every optional field to `null` so a field that is
+      `undefined` and a field that is simply absent serialise identically; it has its own
+      dedicated tests independent of the chain logic that calls it.

@@ -11,6 +11,23 @@ import { AUTHORITY_LABELS, ANALYTICAL_METHOD_LABELS, OPERATIONAL_MODE_LABELS, ty
 import { ClipboardCheck, ArrowUpRight } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
+/** Renders what ties this decision to the hash-chained audit trail (docs/assumptions.md item
+ * 36) — otherwise `decisionAuditHash` is written once by the sealer and never surfaced anywhere,
+ * making the "decisions carry the hash of the record that captured them" claim unverifiable. */
+function AuditRecordCell({ rec }: { rec: Recommendation }) {
+  if (rec.decisionAuditHash) {
+    return (
+      <span className="font-mono text-[10px] text-ink-500" title={rec.decisionAuditHash}>
+        #{rec.decisionAuditSeq} · {rec.decisionAuditHash.slice(0, 8)}
+      </span>
+    )
+  }
+  if (rec.decisionAuditSeq !== undefined) {
+    return <span className="text-[10px] text-ink-700">seq {rec.decisionAuditSeq} (sealing…)</span>
+  }
+  return <span className="text-ink-700">—</span>
+}
+
 const DECISION_LABELS: Record<string, string> = {
   awaiting_decision: 'Awaiting Decision',
   accepted: 'Accepted',
@@ -84,6 +101,7 @@ export function DecisionCentrePage() {
                 <th className="pb-2 font-medium">Decision</th>
                 <th className="pb-2 font-medium">Role</th>
                 <th className="pb-2 font-medium">Comment</th>
+                <th className="pb-2 font-medium">Audit Record</th>
               </tr>
             </thead>
             <tbody>
@@ -95,6 +113,9 @@ export function DecisionCentrePage() {
                   </td>
                   <td className="py-2 text-ink-400">{r.decidedByRole ? AUTHORITY_LABELS[r.decidedByRole] : '—'}</td>
                   <td className="py-2 text-ink-400">{r.decisionComment}</td>
+                  <td className="py-2" data-testid={`decision-audit-record-${r.id}`}>
+                    <AuditRecordCell rec={r} />
+                  </td>
                 </tr>
               ))}
             </tbody>

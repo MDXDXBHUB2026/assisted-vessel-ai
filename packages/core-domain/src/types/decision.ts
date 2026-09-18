@@ -63,6 +63,22 @@ export interface Recommendation {
   hazardId?: string
   /** The category of the hazard named by `hazardId` — see `ValidationInput.originatingHazardCategory`. */
   originatingHazardCategory?: HazardCategory
+  /**
+   * The `seq` of the hash-chained audit event that recorded the human decision on this
+   * recommendation (accept/reject/modify/etc). `seq` — not `id` — because it is the audit
+   * trail's immutable ordering key; ties the decision to a specific, position-fixed entry in the
+   * chain rather than to a string that exists purely for display. Set synchronously when the
+   * decision is recorded, before that audit event has necessarily been sealed.
+   */
+  decisionAuditSeq?: number
+  /**
+   * The sealed hash of the audit event named by `decisionAuditSeq`, once the incremental sealer
+   * has reached it — see packages/core-domain/src/auditChain.ts. Undefined until then; a reader
+   * should not infer anything from its absence beyond "not sealed yet". This is what "carries the
+   * hash of the audit record" (docs/production-architecture-assessment.md §7 Phase 1) means in
+   * practice: the field is backfilled, never fabricated ahead of the real computation.
+   */
+  decisionAuditHash?: string
 }
 
 export type AuditEventKind =
@@ -96,4 +112,27 @@ export interface AuditEvent {
   outcome?: string
   /** The hazard this audit entry belongs to, for the hazard's "reach its audit entries" linkage. */
   hazardId?: string
+
+  /**
+   * Monotonic, gap-free ordering key assigned once, at the single point an event is created
+   * (see `createAuditEvent` in `auditChain.ts`) — regardless of which of the two producers
+   * (the engine tick, or a store action) created it. This is the audit trail's real identity;
+   * `id` is a display-oriented mint and carries no ordering guarantee across two producers.
+   */
+  seq: number
+  /**
+   * The hash of the immediately preceding record in the chain (by `seq`), or
+   * `AUDIT_CHAIN_GENESIS_HASH` for the very first record ever sealed. `PENDING_HASH` (`''`) until
+   * the incremental sealer reaches this record — hashing is async (crypto.subtle) and runs
+   * outside the synchronous simulation tick, so a freshly created event is "pending" for a short
+   * window before it is "sealed". See auditChain.ts.
+   */
+  prevHash: string
+  /**
+   * SHA-256 (hex) over this record's canonical serialisation (via `canonicaliseAuditEvent`,
+   * which explicitly EXCLUDES `hash` and `prevHash` themselves — hashing a field that is part of
+   * the hash's own definition is circular) concatenated with `prevHash`. `PENDING_HASH` (`''`)
+   * until sealed.
+   */
+  hash: string
 }

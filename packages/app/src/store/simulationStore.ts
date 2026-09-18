@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { AuditEventKind, Hazard, OperationalMode, PocExecutionMode, RequiredAuthority, ScenarioId, ShoreCase, ShoreFunction } from '@/types'
+import type { AuditEvent, AuditEventKind, Hazard, OperationalMode, PocExecutionMode, RequiredAuthority, ScenarioId, ShoreCase, ShoreFunction } from '@/types'
 import type { TargetRiskLimits } from '@ave/decision-engine/targetRisk'
 import { assistanceLevelRank, OPERATIONAL_MODE_LABELS } from '@/types'
 import { activeIntolerableHazardCategories, canTransition, HAZARD_ACTION_LABELS, HAZARD_ACTION_PAST_TENSE, HAZARD_STATUS_LABELS, type HazardAction } from '@ave/decision-engine/hazardLifecycle'
@@ -10,6 +10,7 @@ import { toRelativeRisk } from '@ave/simulator/simulation/navigation'
 import { validateRecommendation } from '@ave/safety-engine/validate'
 import { assessOdd } from '@ave/safety-engine/oddEngine'
 import { DEMO_VOYAGE_PHASES } from '@ave/simulator/simulation/demoVoyage'
+import { createAuditEvent, sealPending, PENDING_HASH } from '@ave/core-domain/auditChain'
 import { readStoredPocMode, writeStoredPocMode } from '@/services/pocMode'
 import { resolveTelemetryAdapter } from '@/services/adapters/telemetryAdapter'
 import { resolveWeatherAdapter } from '@/services/adapters/weatherAdapter'
@@ -30,6 +31,29 @@ let probeGeneration = 0
 
 function mintId(prefix: string, counter: number): string {
   return `${prefix}-${String(counter).padStart(6, '0')}`
+}
+
+/**
+ * The store's half of the single audit `seq` sequencing point (the engine tick is the other —
+ * see engine.ts and docs/assumptions.md constraint 3). Every store action that writes an audit
+ * event goes through this, so `seq` allocation and the boilerplate fields (id/timestamp/mode)
+ * are written exactly once rather than at every one of the dozen-plus call sites below.
+ * `scenarioId` must be passed explicitly — most call sites want the ACTIVE scenario at the time
+ * of the event, but a few (a reset, a POC mode change) deliberately want `null`, and a couple
+ * (setScenario, skipToPhase) want the scenario being switched TO, not the one being left — no
+ * single default is correct for all of them.
+ */
+function buildStoreAuditEvent(
+  state: SimulationState,
+  auditId: string,
+  fields: Omit<AuditEvent, 'id' | 'seq' | 'hash' | 'prevHash' | 'timestampIso' | 'operatingMode'> & { operatingMode?: string },
+): AuditEvent {
+  return createAuditEvent(state.nextAuditSeq + 1, {
+    id: auditId,
+    timestampIso: state.snapshot.simTimeIso,
+    operatingMode: fields.operatingMode ?? OPERATIONAL_MODE_LABELS[state.snapshot.operationalMode],
+    ...fields,
+  })
 }
 
 interface SimulationStore extends SimulationState {
@@ -76,9 +100,30 @@ interface SimulationStore extends SimulationState {
   updateShoreCase: (id: string, status: ShoreCase['status'], guidanceNotes?: string) => void
 
   logAudit: (event: string, kind?: AuditEventKind) => void
+
+  /**
+   * The incremental sealer's entry point (docs/assumptions.md constraint 2). Genuinely async —
+   * hashes with crypto.subtle — and deliberately never called from inside a synchronous tick.
+   * Also backfills `decisionAuditHash` on any recommendation whose `decisionAuditSeq` this pass
+   * just sealed. Safe to call repeatedly; a call while one is already in flight is a no-op.
+   */
+  sealAuditChain: () => Promise<void>
 }
 
-export const useSimulationStore = create<SimulationStore>((set, get) => ({
+export const useSimulationStore = create<SimulationStore>((set, get) => {
+  // Local to this store instance (not module-global), so a fresh store — a fresh `create()` call,
+  // as every test file's `beforeEach` triggers via `resetEnvironment` — never inherits another
+  // instance's in-flight state.
+  let sealInFlight = false
+  // Set when a seal trigger arrives WHILE a pass is already in flight. A plain "if in flight,
+  // return" guard would silently DROP that trigger — if the record it was for stays pending
+  // forever (nothing else ever changes `nextAuditSeq` again, e.g. the session is paused right
+  // after), it falls permanently outside `verifyChain`'s reach, since verification excludes
+  // pending records entirely. Setting this flag instead makes the in-flight pass loop once more
+  // after it finishes, so no trigger is ever lost — see `sealAuditChain` below.
+  let sealDirty = false
+
+  return {
   ...buildInitialSimulationState(),
   pocMode: readStoredPocMode(),
 
@@ -86,6 +131,9 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
     const state = get()
     if (!state.isPlaying) return
     set(tick(state, BASE_DT_MINUTES_PER_SECOND * elapsedSeconds))
+    // Sealing itself is triggered by the `nextAuditSeq` subscription below, not from here — that
+    // covers every producer (this tick AND every store action, including ones fired while
+    // paused) from one place, rather than needing a call at every audit-writing site.
   },
 
   play: () => set({ isPlaying: true }),
@@ -94,29 +142,35 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
 
   resetEnvironment: () => {
     // Continue the ID sequence. RESET ENVIRONMENT deliberately retains the prior audit trail, so
-    // restarting the counter would mint IDs colliding with records already in it.
+    // restarting the counter would mint IDs colliding with records already in it. Same for the
+    // audit chain's `seq` counter and its sealed-prefix checkpoint — see docs/assumptions.md.
     const carried = get().nextIdCounter
-    const fresh = buildInitialSimulationState(carried + 1, get().nextShoreCaseNumber)
+    const carriedAuditSeq = get().nextAuditSeq
+    const carriedChainCheckpoint = get().auditChainCheckpoint
+    const carriedEvictedThroughSeq = get().evictedThroughSeq
+    const fresh = buildInitialSimulationState(carried + 1, get().nextShoreCaseNumber, carriedAuditSeq)
     const prevAudit = get().auditEvents
     const pocMode = get().pocMode
     const targetRiskLimits = get().targetRiskLimits
+    // Reuses the seq/hash/prevHash slot `fresh` already minted for its own baseline event
+    // (discarded below in favour of this one) rather than also minting a second, unused seq —
+    // unlike `id`, the audit chain's `seq` sequence must never have a gap.
+    const resetEvent: AuditEvent = {
+      ...fresh.auditEvents[0]!,
+      id: mintId('AUD', fresh.nextIdCounter + 1),
+      scenarioId: null,
+      kind: 'simulation',
+      event: 'Environment reset to baseline synthetic operating condition by operator.',
+      outcome: 'Normal',
+    }
     set({
       ...fresh,
       pocMode,
       targetRiskLimits,
+      auditChainCheckpoint: carriedChainCheckpoint,
+      evictedThroughSeq: carriedEvictedThroughSeq,
       nextIdCounter: fresh.nextIdCounter + 1,
-      auditEvents: [
-        {
-          id: mintId('AUD', fresh.nextIdCounter + 1),
-          timestampIso: fresh.snapshot.simTimeIso,
-          operatingMode: OPERATIONAL_MODE_LABELS[fresh.snapshot.operationalMode],
-          scenarioId: null,
-          kind: 'simulation',
-          event: 'Environment reset to baseline synthetic operating condition by operator.',
-          outcome: 'Normal',
-        },
-        ...prevAudit,
-      ],
+      auditEvents: [resetEvent, ...prevAudit],
     })
     void get().probeConnectedAdapters()
   },
@@ -125,25 +179,21 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
     const state = get()
     const auditId = state.nextIdCounter + 1
     const first = DEMO_VOYAGE_PHASES[0]!
+    const auditEvent = buildStoreAuditEvent(state, mintId('AUD', auditId), {
+      scenarioId: first.scenario,
+      kind: 'scenario',
+      event: `Demo Voyage started: "${first.title}".`,
+      outcome: 'started',
+    })
     set({
       nextIdCounter: auditId,
+      nextAuditSeq: auditEvent.seq,
       activeScenario: first.scenario,
       scenarioElapsedMinutes: 0,
       scenarioTriggers: {},
       demoVoyage: { active: true, phaseIndex: 0, phaseElapsedMinutes: 0 },
       isPlaying: true,
-      auditEvents: [
-        {
-          id: mintId('AUD', auditId),
-          timestampIso: state.snapshot.simTimeIso,
-          operatingMode: OPERATIONAL_MODE_LABELS[state.snapshot.operationalMode],
-          scenarioId: first.scenario,
-          kind: 'scenario',
-          event: `Demo Voyage started: "${first.title}".`,
-          outcome: 'started',
-        },
-        ...state.auditEvents,
-      ],
+      auditEvents: [auditEvent, ...state.auditEvents],
     })
   },
 
@@ -152,24 +202,20 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
     const auditId = state.nextIdCounter + 1
     const phase = DEMO_VOYAGE_PHASES[index]
     if (!phase) return
+    const auditEvent = buildStoreAuditEvent(state, mintId('AUD', auditId), {
+      scenarioId: phase.scenario,
+      kind: 'scenario',
+      event: `Demo Voyage skipped to phase: "${phase.title}".`,
+      outcome: 'phase_skipped',
+    })
     set({
       nextIdCounter: auditId,
+      nextAuditSeq: auditEvent.seq,
       activeScenario: phase.scenario,
       scenarioElapsedMinutes: 0,
       scenarioTriggers: {},
       demoVoyage: { active: true, phaseIndex: index, phaseElapsedMinutes: 0 },
-      auditEvents: [
-        {
-          id: mintId('AUD', auditId),
-          timestampIso: state.snapshot.simTimeIso,
-          operatingMode: OPERATIONAL_MODE_LABELS[state.snapshot.operationalMode],
-          scenarioId: phase.scenario,
-          kind: 'scenario',
-          event: `Demo Voyage skipped to phase: "${phase.title}".`,
-          outcome: 'phase_skipped',
-        },
-        ...state.auditEvents,
-      ],
+      auditEvents: [auditEvent, ...state.auditEvents],
     })
   },
 
@@ -181,45 +227,38 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
   setScenario: (scenario) => {
     const state = get()
     const auditId = state.nextIdCounter + 1
+    const auditEvent = buildStoreAuditEvent(state, mintId('AUD', auditId), {
+      scenarioId: scenario === 'normal_operations' ? null : scenario,
+      kind: 'scenario',
+      event: `Scenario activated: ${scenario.replace(/_/g, ' ')}.`,
+      outcome: 'Activated',
+    })
     set({
       nextIdCounter: auditId,
+      nextAuditSeq: auditEvent.seq,
       activeScenario: scenario,
       scenarioElapsedMinutes: 0,
       scenarioTriggers: {},
       demoVoyage: { ...state.demoVoyage, active: false },
-      auditEvents: [
-        {
-          id: mintId('AUD', auditId),
-          timestampIso: state.snapshot.simTimeIso,
-          operatingMode: OPERATIONAL_MODE_LABELS[state.snapshot.operationalMode],
-          scenarioId: scenario === 'normal_operations' ? null : scenario,
-          kind: 'scenario',
-          event: `Scenario activated: ${scenario.replace(/_/g, ' ')}.`,
-          outcome: 'Activated',
-        },
-        ...state.auditEvents,
-      ],
+      auditEvents: [auditEvent, ...state.auditEvents],
     })
   },
 
   setOperationalMode: (mode) => {
     const state = get()
     const auditId = state.nextIdCounter + 1
+    const auditEvent = buildStoreAuditEvent(state, mintId('AUD', auditId), {
+      operatingMode: OPERATIONAL_MODE_LABELS[mode],
+      scenarioId: state.activeScenario === 'normal_operations' ? null : state.activeScenario,
+      kind: 'mode_change',
+      event: `Operational mode changed to ${OPERATIONAL_MODE_LABELS[mode]}.`,
+      outcome: OPERATIONAL_MODE_LABELS[mode],
+    })
     set({
       nextIdCounter: auditId,
+      nextAuditSeq: auditEvent.seq,
       snapshot: { ...state.snapshot, operationalMode: mode },
-      auditEvents: [
-        {
-          id: mintId('AUD', auditId),
-          timestampIso: state.snapshot.simTimeIso,
-          operatingMode: OPERATIONAL_MODE_LABELS[mode],
-          scenarioId: state.activeScenario === 'normal_operations' ? null : state.activeScenario,
-          kind: 'mode_change',
-          event: `Operational mode changed to ${OPERATIONAL_MODE_LABELS[mode]}.`,
-          outcome: OPERATIONAL_MODE_LABELS[mode],
-        },
-        ...state.auditEvents,
-      ],
+      auditEvents: [auditEvent, ...state.auditEvents],
     })
   },
 
@@ -273,45 +312,37 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
           : undefined
 
     if (refusedReason) {
+      const auditEvent = buildStoreAuditEvent(state, mintId('AUD', auditId), {
+        scenarioId: state.activeScenario === 'normal_operations' ? null : state.activeScenario,
+        kind: 'safety_validation',
+        event: `Voyage speed adoption REFUSED by the safety layer: ${refusedReason}`,
+        humanDecision: 'rejected',
+        responsibleRole: role,
+        safetyValidationResult: validation.verdict,
+        outcome: 'Refused — speed profile not applied',
+      })
       set({
         nextIdCounter: auditId,
-        auditEvents: [
-          {
-            id: mintId('AUD', auditId),
-            timestampIso: state.snapshot.simTimeIso,
-            operatingMode: OPERATIONAL_MODE_LABELS[state.snapshot.operationalMode],
-            scenarioId: state.activeScenario === 'normal_operations' ? null : state.activeScenario,
-            kind: 'safety_validation',
-            event: `Voyage speed adoption REFUSED by the safety layer: ${refusedReason}`,
-            humanDecision: 'rejected',
-            responsibleRole: role,
-            safetyValidationResult: validation.verdict,
-            outcome: 'Refused — speed profile not applied',
-          },
-          ...state.auditEvents,
-        ],
+        nextAuditSeq: auditEvent.seq,
+        auditEvents: [auditEvent, ...state.auditEvents],
       })
       return
     }
 
+    const auditEvent = buildStoreAuditEvent(state, mintId('AUD', auditId), {
+      scenarioId: state.activeScenario === 'normal_operations' ? null : state.activeScenario,
+      kind: 'human_decision',
+      event: `${role.replace(/_/g, ' ')} authorised the recommended voyage speed profile — L3 supervised execution (safety validation ${validation.verdict.toUpperCase()}, assistance level ${odd.availableAssistanceLevel}).`,
+      humanDecision: 'accepted',
+      responsibleRole: role,
+      safetyValidationResult: validation.verdict,
+      outcome: 'Recommended speed adopted',
+    })
     set({
       nextIdCounter: auditId,
+      nextAuditSeq: auditEvent.seq,
       voyagePlan: { ...state.voyagePlan, recommendationAccepted: true, userModifiedSpeedKn: state.voyagePlan.recommendedSpeedKn },
-      auditEvents: [
-        {
-          id: mintId('AUD', auditId),
-          timestampIso: state.snapshot.simTimeIso,
-          operatingMode: OPERATIONAL_MODE_LABELS[state.snapshot.operationalMode],
-          scenarioId: state.activeScenario === 'normal_operations' ? null : state.activeScenario,
-          kind: 'human_decision',
-          event: `${role.replace(/_/g, ' ')} authorised the recommended voyage speed profile — L3 supervised execution (safety validation ${validation.verdict.toUpperCase()}, assistance level ${odd.availableAssistanceLevel}).`,
-          humanDecision: 'accepted',
-          responsibleRole: role,
-          safetyValidationResult: validation.verdict,
-          outcome: 'Recommended speed adopted',
-        },
-        ...state.auditEvents,
-      ],
+      auditEvents: [auditEvent, ...state.auditEvents],
     })
   },
 
@@ -319,24 +350,20 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
     writeStoredPocMode(mode)
     const state = get()
     const auditId = state.nextIdCounter + 1
+    const auditEvent = buildStoreAuditEvent(state, mintId('AUD', auditId), {
+      scenarioId: null,
+      kind: 'simulation',
+      event: `POC execution mode set to ${mode.toUpperCase()}.`,
+      outcome: mode,
+    })
     set({
       nextIdCounter: auditId,
+      nextAuditSeq: auditEvent.seq,
       pocMode: mode,
       adapterStatuses: mode === 'offline'
         ? { telemetry: 'simulated', weather: 'simulated', copilot: 'simulated', documents: 'simulated', systemHealthApi: 'simulated', audit: 'simulated', shoreCases: 'simulated' }
         : { ...state.adapterStatuses, telemetry: 'connecting', weather: 'connecting', copilot: 'connecting', documents: 'connecting', systemHealthApi: 'connecting', audit: 'connecting', shoreCases: 'connecting' },
-      auditEvents: [
-        {
-          id: mintId('AUD', auditId),
-          timestampIso: state.snapshot.simTimeIso,
-          operatingMode: OPERATIONAL_MODE_LABELS[state.snapshot.operationalMode],
-          scenarioId: null,
-          kind: 'simulation',
-          event: `POC execution mode set to ${mode.toUpperCase()}.`,
-          outcome: mode,
-        },
-        ...state.auditEvents,
-      ],
+      auditEvents: [auditEvent, ...state.auditEvents],
     })
     if (mode === 'connected') void get().probeConnectedAdapters()
   },
@@ -379,23 +406,19 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
     // The refused attempt is itself recorded: an operator trying to action a blocked
     // recommendation is exactly the event an audit trail exists to capture.
     if (rec.safetyValidation.verdict === 'blocked' && (decision === 'accepted' || decision === 'modified')) {
+      const auditEvent = buildStoreAuditEvent(state, mintId('AUD', auditId), {
+        scenarioId: state.activeScenario === 'normal_operations' ? null : state.activeScenario,
+        kind: 'safety_validation',
+        event: `Attempt to ${decision === 'accepted' ? 'accept' : 'modify'} a BLOCKED recommendation "${rec.title}" was refused by the safety layer.`,
+        recommendationId: id,
+        responsibleRole: role,
+        safetyValidationResult: 'blocked',
+        outcome: 'Refused — recommendation is not executable',
+      })
       set({
         nextIdCounter: auditId,
-        auditEvents: [
-          {
-            id: mintId('AUD', auditId),
-            timestampIso: state.snapshot.simTimeIso,
-            operatingMode: OPERATIONAL_MODE_LABELS[state.snapshot.operationalMode],
-            scenarioId: state.activeScenario === 'normal_operations' ? null : state.activeScenario,
-            kind: 'safety_validation',
-            event: `Attempt to ${decision === 'accepted' ? 'accept' : 'modify'} a BLOCKED recommendation "${rec.title}" was refused by the safety layer.`,
-            recommendationId: id,
-            responsibleRole: role,
-            safetyValidationResult: 'blocked',
-            outcome: 'Refused — recommendation is not executable',
-          },
-          ...state.auditEvents,
-        ],
+        nextAuditSeq: auditEvent.seq,
+        auditEvents: [auditEvent, ...state.auditEvents],
       })
       return
     }
@@ -411,8 +434,20 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
               ? 'Additional information requested before decision.'
               : 'Shore support requested for this recommendation.'
 
+    const auditEvent = buildStoreAuditEvent(state, mintId('AUD', auditId), {
+      scenarioId: state.activeScenario === 'normal_operations' ? null : state.activeScenario,
+      kind: 'human_decision',
+      event: `Decision recorded for "${rec.title}": ${decision.replace(/_/g, ' ')}.`,
+      recommendationId: id,
+      humanDecision: decision,
+      decisionComment: comment,
+      responsibleRole: role,
+      outcome,
+    })
+
     set({
       nextIdCounter: auditId,
+      nextAuditSeq: auditEvent.seq,
       recommendations: state.recommendations.map((r) =>
         r.id === id
           ? {
@@ -422,39 +457,25 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
               decidedByRole: role,
               decidedAtIso: state.snapshot.simTimeIso,
               outcome,
+              // Ties the decision to the immutable, hash-chained audit record that captured it
+              // (docs/production-architecture-assessment.md §7 Phase 1) rather than to a mutable
+              // id. `decisionAuditHash` is backfilled once the sealer reaches this seq — see
+              // `sealAuditChain` below.
+              decisionAuditSeq: auditEvent.seq,
             }
           : r,
       ),
-      auditEvents: [
-        {
-          id: mintId('AUD', auditId),
-          timestampIso: state.snapshot.simTimeIso,
-          operatingMode: OPERATIONAL_MODE_LABELS[state.snapshot.operationalMode],
-          scenarioId: state.activeScenario === 'normal_operations' ? null : state.activeScenario,
-          kind: 'human_decision',
-          event: `Decision recorded for "${rec.title}": ${decision.replace(/_/g, ' ')}.`,
-          recommendationId: id,
-          humanDecision: decision,
-          decisionComment: comment,
-          responsibleRole: role,
-          outcome,
-        },
-        ...state.auditEvents,
-      ],
+      auditEvents: [auditEvent, ...state.auditEvents],
     })
 
     if (state.pocMode === 'connected') {
-      void connectedAuditAdapter.append({
-        id: `mirror-${id}-${Date.now()}`,
-        timestampIso: state.snapshot.simTimeIso,
-        operatingMode: OPERATIONAL_MODE_LABELS[state.snapshot.operationalMode],
-        scenarioId: state.activeScenario,
-        kind: 'human_decision',
-        event: `Decision recorded for "${rec.title}": ${decision.replace(/_/g, ' ')}.`,
-        recommendationId: id,
-        humanDecision: decision,
-        outcome,
-      })
+      // This mirror is a copy sent across a separate system boundary (connectedAuditAdapter) —
+      // it is NOT a record in this store's own hash chain. Overriding `id`/`scenarioId` below
+      // means `auditEvent.hash`/`prevHash` no longer describe this record's actual content, so
+      // they are reset to PENDING rather than carried over looking like a valid chain link this
+      // mirror does not have: it is never covered by `verifyChain` and makes no tamper-evidence
+      // claim. (In this demonstrator, `connected` mode always falls back — see docs/assumptions.md.)
+      void connectedAuditAdapter.append({ ...auditEvent, id: `mirror-${id}-${Date.now()}`, scenarioId: state.activeScenario, hash: PENDING_HASH, prevHash: PENDING_HASH })
     }
 
     if (decision === 'shore_support_requested') {
@@ -486,22 +507,19 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
     const scenarioId = state.activeScenario === 'normal_operations' ? null : state.activeScenario
 
     if (!check.allowed) {
+      const auditEvent = buildStoreAuditEvent(state, mintId('AUD', auditId), {
+        operatingMode,
+        scenarioId,
+        kind: 'hazard_lifecycle',
+        event: `${actorRole.replace(/_/g, ' ')} attempted to ${HAZARD_ACTION_LABELS[action]} hazard "${hazard.title}" — refused: ${check.reason}`,
+        hazardId: hazard.id,
+        responsibleRole: actorRole,
+        outcome: 'refused',
+      })
       set({
         nextIdCounter: auditId,
-        auditEvents: [
-          {
-            id: mintId('AUD', auditId),
-            timestampIso,
-            operatingMode,
-            scenarioId,
-            kind: 'hazard_lifecycle',
-            event: `${actorRole.replace(/_/g, ' ')} attempted to ${HAZARD_ACTION_LABELS[action]} hazard "${hazard.title}" — refused: ${check.reason}`,
-            hazardId: hazard.id,
-            responsibleRole: actorRole,
-            outcome: 'refused',
-          },
-          ...state.auditEvents,
-        ],
+        nextAuditSeq: auditEvent.seq,
+        auditEvents: [auditEvent, ...state.auditEvents],
       })
       return
     }
@@ -527,23 +545,20 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
       updated = { ...updated, escalation: undefined }
     }
 
+    const auditEvent = buildStoreAuditEvent(state, mintId('AUD', auditId), {
+      operatingMode,
+      scenarioId,
+      kind: 'hazard_lifecycle',
+      event: `${actorRole.replace(/_/g, ' ')} ${HAZARD_ACTION_PAST_TENSE[action]} hazard "${hazard.title}": ${HAZARD_STATUS_LABELS[hazard.status]} -> ${HAZARD_STATUS_LABELS[updated.status]}.${details?.note ? ` Note: ${details.note}` : ''}`,
+      hazardId: hazard.id,
+      responsibleRole: actorRole,
+      outcome: updated.status,
+    })
     set({
       nextIdCounter: auditId,
+      nextAuditSeq: auditEvent.seq,
       hazards: state.hazards.map((h) => (h.id === id ? updated : h)),
-      auditEvents: [
-        {
-          id: mintId('AUD', auditId),
-          timestampIso,
-          operatingMode,
-          scenarioId,
-          kind: 'hazard_lifecycle',
-          event: `${actorRole.replace(/_/g, ' ')} ${HAZARD_ACTION_PAST_TENSE[action]} hazard "${hazard.title}": ${HAZARD_STATUS_LABELS[hazard.status]} -> ${HAZARD_STATUS_LABELS[updated.status]}.${details?.note ? ` Note: ${details.note}` : ''}`,
-          hazardId: hazard.id,
-          responsibleRole: actorRole,
-          outcome: updated.status,
-        },
-        ...state.auditEvents,
-      ],
+      auditEvents: [auditEvent, ...state.auditEvents],
     })
   },
 
@@ -566,22 +581,18 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
       createdAtIso: state.snapshot.simTimeIso,
       recommendationId: input.recommendationId,
     }
+    const auditEvent = buildStoreAuditEvent(state, mintId('AUD', auditId), {
+      scenarioId: state.activeScenario === 'normal_operations' ? null : state.activeScenario,
+      kind: 'shore_case',
+      event: `Shore assistance request created: ${id} (${input.function.replace(/_/g, ' ')}, priority ${input.priority}).`,
+      outcome: 'Case opened',
+    })
     set({
       nextIdCounter: auditId,
+      nextAuditSeq: auditEvent.seq,
       nextShoreCaseNumber: caseNumber + 1,
       shoreCases: [newCase, ...state.shoreCases],
-      auditEvents: [
-        {
-          id: mintId('AUD', auditId),
-          timestampIso: state.snapshot.simTimeIso,
-          operatingMode: OPERATIONAL_MODE_LABELS[state.snapshot.operationalMode],
-          scenarioId: state.activeScenario === 'normal_operations' ? null : state.activeScenario,
-          kind: 'shore_case',
-          event: `Shore assistance request created: ${id} (${input.function.replace(/_/g, ' ')}, priority ${input.priority}).`,
-          outcome: 'Case opened',
-        },
-        ...state.auditEvents,
-      ],
+      auditEvents: [auditEvent, ...state.auditEvents],
     })
     if (state.pocMode === 'connected') void connectedShoreCaseAdapter.sync(newCase)
   },
@@ -592,21 +603,17 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
     const shoreCase = state.shoreCases.find((c) => c.id === id)
     if (!shoreCase) return
     const updated = { ...shoreCase, status, guidanceNotes: guidanceNotes ?? shoreCase.guidanceNotes }
+    const auditEvent = buildStoreAuditEvent(state, mintId('AUD', auditId), {
+      scenarioId: state.activeScenario === 'normal_operations' ? null : state.activeScenario,
+      kind: 'shore_case',
+      event: `Shore case ${id} updated to ${status.replace(/_/g, ' ')}.${guidanceNotes ? ` Guidance: ${guidanceNotes}` : ''}`,
+      outcome: status,
+    })
     set({
       nextIdCounter: auditId,
+      nextAuditSeq: auditEvent.seq,
       shoreCases: state.shoreCases.map((c) => (c.id === id ? updated : c)),
-      auditEvents: [
-        {
-          id: mintId('AUD', auditId),
-          timestampIso: state.snapshot.simTimeIso,
-          operatingMode: OPERATIONAL_MODE_LABELS[state.snapshot.operationalMode],
-          scenarioId: state.activeScenario === 'normal_operations' ? null : state.activeScenario,
-          kind: 'shore_case',
-          event: `Shore case ${id} updated to ${status.replace(/_/g, ' ')}.${guidanceNotes ? ` Guidance: ${guidanceNotes}` : ''}`,
-          outcome: status,
-        },
-        ...state.auditEvents,
-      ],
+      auditEvents: [auditEvent, ...state.auditEvents],
     })
     if (state.pocMode === 'connected') void connectedShoreCaseAdapter.sync(updated)
   },
@@ -614,8 +621,15 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
   setTargetRiskLimits: (limits) => {
     const state = get()
     const auditId = state.nextIdCounter + 1
+    const auditEvent = buildStoreAuditEvent(state, mintId('AUD', auditId), {
+      scenarioId: state.activeScenario === 'normal_operations' ? null : state.activeScenario,
+      kind: 'mode_change',
+      event: `CPA/TCPA limit pair set to ${limits.cpaLimitNm.toFixed(2)} nm / ${limits.tcpaLimitMinutes} min by operator.`,
+      outcome: 'Limits updated',
+    })
     set({
       nextIdCounter: auditId,
+      nextAuditSeq: auditEvent.seq,
       targetRiskLimits: limits,
       // Re-classify every target's relativeRisk against the new limits immediately, rather than
       // waiting for the next engine tick — while the simulation is paused no further tick runs,
@@ -623,37 +637,79 @@ export const useSimulationStore = create<SimulationStore>((set, get) => ({
       // classification indefinitely even though the canvas (which reads targetRiskLimits directly)
       // repaints instantly.
       targets: state.targets.map((t) => ({ ...t, relativeRisk: toRelativeRisk(t.cpaNm, t.tcpaMinutes, limits) })),
-      auditEvents: [
-        {
-          id: mintId('AUD', auditId),
-          timestampIso: state.snapshot.simTimeIso,
-          operatingMode: OPERATIONAL_MODE_LABELS[state.snapshot.operationalMode],
-          scenarioId: state.activeScenario === 'normal_operations' ? null : state.activeScenario,
-          kind: 'mode_change',
-          event: `CPA/TCPA limit pair set to ${limits.cpaLimitNm.toFixed(2)} nm / ${limits.tcpaLimitMinutes} min by operator.`,
-          outcome: 'Limits updated',
-        },
-        ...state.auditEvents,
-      ],
+      auditEvents: [auditEvent, ...state.auditEvents],
     })
   },
 
   logAudit: (event, kind = 'mode_change') => {
     const state = get()
     const auditId = state.nextIdCounter + 1
+    const auditEvent = buildStoreAuditEvent(state, mintId('AUD', auditId), {
+      scenarioId: state.activeScenario === 'normal_operations' ? null : state.activeScenario,
+      kind,
+      event,
+    })
     set({
       nextIdCounter: auditId,
-      auditEvents: [
-        {
-          id: mintId('AUD', auditId),
-          timestampIso: state.snapshot.simTimeIso,
-          operatingMode: OPERATIONAL_MODE_LABELS[state.snapshot.operationalMode],
-          scenarioId: state.activeScenario === 'normal_operations' ? null : state.activeScenario,
-          kind,
-          event,
-        },
-        ...state.auditEvents,
-      ],
+      nextAuditSeq: auditEvent.seq,
+      auditEvents: [auditEvent, ...state.auditEvents],
     })
   },
-}))
+
+  sealAuditChain: async () => {
+    if (sealInFlight) {
+      sealDirty = true // don't drop this trigger — the in-flight pass will loop again for it
+      return
+    }
+    sealInFlight = true
+    try {
+      // Loop rather than a single pass: a trigger that arrives during the `await` below (another
+      // producer allocating a new seq) sets `sealDirty` instead of starting a second overlapping
+      // pass. Looping here — after this pass has already committed — picks that trigger back up
+      // deterministically, instead of relying on some future unrelated change to `nextAuditSeq` to
+      // ever re-trigger sealing.
+      do {
+        sealDirty = false
+        const before = get()
+        const { events, checkpoint, sealedAny } = await sealPending(before.auditEvents, before.auditChainCheckpoint)
+        if (sealedAny) {
+          // The seq range THIS pass newly sealed (as opposed to whatever was already sealed before
+          // it started). Used to merge into whatever the CURRENT state is when the commit below
+          // actually runs — never write back `events`/`recommendations` themselves: crypto.subtle is
+          // async, and the engine tick (or another store action) can append new pending events, or a
+          // human can record a decision, during the await. Committing the pre-await snapshot
+          // wholesale would silently discard whatever arrived during that window — a record lost
+          // with no chain break to show it, or a just-recorded decision reverted to undecided.
+          const newlySealed = new Map(events.filter((e) => e.seq > before.auditChainCheckpoint.sealedThroughSeq && e.seq <= checkpoint.sealedThroughSeq).map((e) => [e.seq, e]))
+          set((current) => ({
+            auditEvents: current.auditEvents.map((e) => newlySealed.get(e.seq) ?? e),
+            auditChainCheckpoint: checkpoint,
+            recommendations: current.recommendations.map((r) =>
+              r.decisionAuditSeq !== undefined && r.decisionAuditHash === undefined && newlySealed.has(r.decisionAuditSeq) ? { ...r, decisionAuditHash: newlySealed.get(r.decisionAuditSeq)!.hash } : r,
+            ),
+          }))
+        }
+      } while (sealDirty)
+    } finally {
+      sealInFlight = false
+    }
+  },
+  }
+})
+
+// Triggers a seal pass whenever EITHER producer allocates a new seq — the engine tick (via
+// stepIfPlaying) and every store action that writes an audit event all advance `nextAuditSeq`
+// exactly once, from the single sequencing point (see buildStoreAuditEvent / engine.ts). A single
+// subscription here means a safety-relevant decision recorded while the simulation is PAUSED
+// still gets sealed — pausing stops the tick, not audit-writing actions like decideRecommendation
+// or transitionHazard, and those are exactly the events most likely to be recorded while paused.
+useSimulationStore.subscribe((state, previous) => {
+  if (state.nextAuditSeq !== previous.nextAuditSeq) void state.sealAuditChain()
+})
+// The subscription above only fires on a CHANGE to `nextAuditSeq` — it has no way to know that
+// `buildInitialSimulationState` already minted one pending event (seq 1) before this module
+// finished loading, let alone before anything else has had a reason to change that counter. In a
+// scenario that produces no audit events on its own (e.g. sitting in normal_operations), nothing
+// would ever change and that first event would stay pending forever. One explicit kick-off call
+// covers it.
+void useSimulationStore.getState().sealAuditChain()

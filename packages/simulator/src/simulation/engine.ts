@@ -23,6 +23,7 @@ import {
 import { CAUTION_BAND_MULTIPLIER } from '@ave/decision-engine/targetRisk'
 import { activeIntolerableHazardCategories } from '@ave/decision-engine/hazardLifecycle'
 import { buildRiskAssessment } from '@ave/decision-engine/riskMatrix'
+import { createAuditEvent } from '@ave/core-domain/auditChain'
 
 const REEFER_EXCURSION_INDEX = 3
 
@@ -46,15 +47,23 @@ export function tick(prev: SimulationState, dtMinutesBase: number): SimulationSt
     return `${prefix}-${String(idCounter).padStart(6, '0')}`
   }
 
+  // The engine tick is ONE of the two producers sharing the single audit `seq` sequencing point
+  // (the other is simulationStore.ts) — see docs/assumptions.md constraint 3. `auditSeqCounter`
+  // mirrors `idCounter` above: seeded from the persisted counter, advanced locally across
+  // however many events this one tick produces, and committed back once at the end.
+  let auditSeqCounter = prev.nextAuditSeq
   const newAuditEvents: AuditEvent[] = []
-  const pushAudit = (partial: Omit<AuditEvent, 'id' | 'timestampIso' | 'operatingMode' | 'scenarioId'>) => {
-    newAuditEvents.push({
-      id: nextId('AUD'),
-      timestampIso: prev.snapshot.simTimeIso,
-      operatingMode: OPERATIONAL_MODE_LABELS[prev.snapshot.operationalMode],
-      scenarioId: prev.activeScenario === 'normal_operations' ? null : prev.activeScenario,
-      ...partial,
-    })
+  const pushAudit = (partial: Omit<AuditEvent, 'id' | 'timestampIso' | 'operatingMode' | 'scenarioId' | 'seq' | 'hash' | 'prevHash'>) => {
+    auditSeqCounter += 1
+    newAuditEvents.push(
+      createAuditEvent(auditSeqCounter, {
+        id: nextId('AUD'),
+        timestampIso: prev.snapshot.simTimeIso,
+        operatingMode: OPERATIONAL_MODE_LABELS[prev.snapshot.operationalMode],
+        scenarioId: prev.activeScenario === 'normal_operations' ? null : prev.activeScenario,
+        ...partial,
+      }),
+    )
   }
 
   // --- scenario severity ---
@@ -516,6 +525,21 @@ export function tick(prev: SimulationState, dtMinutesBase: number): SimulationSt
     return { ...rec, safetyValidation: fresh, oddAssessment: freshOdd, oddStatus: freshOdd?.status ?? rec.oddStatus }
   })
 
+  // toReversed() rather than reverse(): the latter mutates newAuditEvents in place, which is
+  // surprising for any code reading it after this point. Capped to bound session memory.
+  const combinedAuditEvents = [...[...newAuditEvents].reverse(), ...prev.auditEvents]
+  const truncatedAuditEvents = combinedAuditEvents.slice(0, MAX_AUDIT_EVENTS)
+  // The highest seq this tick's truncation has dropped so far — DERIVED from the surviving
+  // buffer's own oldest record (`oldestSurvivingSeq - 1`), not accumulated as a running total.
+  // Both are correct today (seq is monotonic and gapless — constraint 3 — so the buffer's oldest
+  // seq always equals `evictedThroughSeq + 1`), but accumulation would drift silently if that
+  // invariant were ever broken by a future change, producing a false "Chain Broken" on the
+  // integrity panel; deriving it from the buffer itself is self-correcting instead. This is the
+  // only place records are ever legitimately removed from the live buffer; `verifyChain` uses
+  // this figure to tell genuine eviction apart from an oldest-end deletion that never went
+  // through it — see `evictedThroughSeq` on `SimulationState`.
+  const evictedThroughSeq = truncatedAuditEvents.length > 0 ? truncatedAuditEvents[truncatedAuditEvents.length - 1]!.seq - 1 : prev.evictedThroughSeq
+
   return {
     ...prev,
     snapshot,
@@ -523,15 +547,15 @@ export function tick(prev: SimulationState, dtMinutesBase: number): SimulationSt
     hazards,
     rawAlarms,
     recommendations: revalidated.slice(0, MAX_RECOMMENDATIONS),
-    // toReversed() rather than reverse(): the latter mutates newAuditEvents in place, which is
-    // surprising for any code reading it after this point. Capped to bound session memory.
-    auditEvents: [...[...newAuditEvents].reverse(), ...prev.auditEvents].slice(0, MAX_AUDIT_EVENTS),
+    auditEvents: truncatedAuditEvents,
+    evictedThroughSeq,
     fleet,
     voyagePlan,
     activeScenario,
     scenarioElapsedMinutes: finalScenarioElapsedMinutes,
     scenarioTriggers: finalScenarioTriggers,
     nextIdCounter: idCounter,
+    nextAuditSeq: auditSeqCounter,
     tickCount,
     telemetryHistory,
     machineryAnalysis,
